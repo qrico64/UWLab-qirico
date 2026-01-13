@@ -19,6 +19,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.sensors import TiledCamera, TiledCameraCfg, save_images_to_file
 
 from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
 from uwlab_assets.robots.ur5e_robotiq_gripper import (
@@ -105,6 +106,22 @@ class RlStateSceneCfg(InteractiveSceneCfg):
             intensity=10000.0,
             texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
         ),
+    )
+
+    side_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/rgb_side_camera",
+        update_period=0,
+        height=224,
+        width=224,
+        offset=TiledCameraCfg.OffsetCfg(
+            pos=(1.65, 0, 0.15),
+            rot=(0.5, 0.5, 0.5, 0.5), # (w, x, y, z), -z direction.
+            convention="opengl",
+        ),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=21.9
+        )
     )
 
 
@@ -454,9 +471,22 @@ class ObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 1
 
+    @configclass
+    class RGBCfg(ObsGroup):        
+        side_rgb = ObsTerm(
+            func=task_mdp.process_image,
+            params={
+                "sensor_cfg": SceneEntityCfg("side_camera"),
+                "data_type": "rgb",
+                "process_image": True,
+                "output_size": (224, 224)
+            },
+        )
+
     # observation groups
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
+    rgb: RGBCfg = RGBCfg()
 
 
 @configclass

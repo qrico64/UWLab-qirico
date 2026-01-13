@@ -57,6 +57,9 @@ import gymnasium as gym
 import os
 import time
 import torch
+import imageio
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -81,8 +84,30 @@ from uwlab_tasks.utils.hydra import hydra_task_config
 # PLACEHOLDER: Extension template (do not remove this comment)
 
 
+def save_video(frames, path, fps=30):
+    """Saves a list of frames (numpy arrays) to a video file."""
+    print(f"[INFO] Saving video to {path}...")
+    writer = imageio.get_writer(path, fps=fps)
+    for frame in frames:
+        writer.append_data(frame)
+    writer.close()
+    print(f"[INFO] Video saved successfully.")
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
+    # from source.uwlab_tasks.uwlab_tasks.manager_based.manipulation.reset_states.config.ur5e_robotiq_2f85.rl_state_cfg import Ur5eRobotiq2f85RelCartesianOSCEvalCfg as ClassA
+    # from uwlab_tasks.manager_based.manipulation.reset_states.config.ur5e_robotiq_2f85.rl_state_cfg import Ur5eRobotiq2f85RelCartesianOSCEvalCfg as ClassB
+    # a = ClassA()
+    # b = ClassB()
+    # print(ClassA.__module__)
+    # print(ClassB.__module__)
+    # import uwlab_tasks
+    # import source.uwlab_tasks
+    # import source.uwlab_tasks.uwlab_tasks
+    # print(uwlab_tasks.__file__)
+    # print(source.uwlab_tasks.__file__)
+    # print(source.uwlab_tasks.uwlab_tasks.__file__)
     """Play with RSL-RL agent."""
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
@@ -115,6 +140,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
+    print(env_cfg.to_dict()['observations'].keys())
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -173,7 +199,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
     export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
-    dt = env.unwrapped.step_dt
+    dt = 0.4
+    
+    # NEW: List to store frames for video
+    video_frames = []
+    video_path = "./video.mp4"
 
     # reset environment
     obs = env.get_observations()
@@ -181,6 +211,27 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
+
+        # --- VIDEO CAPTURE LOGIC ---
+        if 'rgb' in obs:
+            # obs['rgb'] shape is (1, 3, 224, 224)
+            # 1. Convert tensor to numpy, remove batch dim, transpose to (H, W, C)
+            frame = obs['rgb'][0].cpu().detach().numpy().transpose(1, 2, 0)
+            
+            # 2. Rescale if needed (assuming 0-1 float to 0-255 uint8)
+            if frame.max() <= 1.0:
+                frame = (frame * 255).astype(np.uint8)
+            
+            # 3. Add text using PIL
+            img = Image.fromarray(frame)
+            draw = ImageDraw.Draw(img)
+            # Draw black text at (5, 5)
+            draw.text((5, 5), f"Step: {timestep}", fill=(0, 0, 0))
+            
+            # 4. Append to list
+            video_frames.append(np.array(img))
+        # ---------------------------
+
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
@@ -189,17 +240,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             obs, _, dones, _ = env.step(actions)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
-        if args_cli.video:
-            timestep += 1
-            # Exit the play loop after recording one video
-            if timestep == args_cli.video_length:
-                break
+        timestep += 1
 
         # time delay for real-time evaluation
+        print(f"step {timestep}")
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
 
+    # Save the video using the helper function
+    if len(video_frames) > 0:
+        save_video(video_frames, video_path, fps=int(1/dt))
+    
     # close the simulator
     env.close()
 
