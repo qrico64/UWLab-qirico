@@ -207,10 +207,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # reset environment
     obs = env.get_observations()
+    reward_val = 0
+    done_val = 0
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
+
+        print(f"step {timestep}")
+        if timestep > 50:
+            break
 
         # --- VIDEO CAPTURE LOGIC ---
         if 'rgb' in obs:
@@ -224,9 +230,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             
             # 3. Add text using PIL
             img = Image.fromarray(frame)
+            img = img.resize((400, 400), Image.Resampling.LANCZOS)
             draw = ImageDraw.Draw(img)
             # Draw black text at (5, 5)
-            draw.text((5, 5), f"Step: {timestep}", fill=(0, 0, 0))
+            draw.text((5, 5), f"t={timestep} r={reward_val:.5f} done={done_val}", fill=(0, 0, 0))
             
             # 4. Append to list
             video_frames.append(np.array(img))
@@ -237,13 +244,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, dones, _ = env.step(actions)
+            obs, reward, dones, info = env.step(actions)
+            reward_val = reward.item()
+            done_val = dones.item()
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
         timestep += 1
 
         # time delay for real-time evaluation
-        print(f"step {timestep}")
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
