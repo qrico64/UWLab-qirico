@@ -34,6 +34,7 @@ def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
     ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("2D point distribution")
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi)
+    print(out_path)
     plt.close(fig)
 
 
@@ -50,6 +51,7 @@ def save_histogram(x, filename, bins=100):
     plt.hist(x, bins=bins)
     plt.tight_layout()
     plt.savefig(filename)
+    print(filename)
     plt.close()
 
 
@@ -113,27 +115,28 @@ def plot_actions_tsne(actions, n_components=2, filename="tsne_plot.png"):
     
     plt.tight_layout()
     plt.savefig(filename, dpi=300) # High DPI for publication quality
-    print(f"Plot saved to {filename}")
+    print(filename)
 
 
 def main():
+    VIZ_DIR = "viz/ynnn-02-0/"
     with open("trajectories_ynnn-True-0.0-0.0-10000.pkl", "rb") as fi:
         trajs = pickle.load(fi)
     lengths = [traj['actions'].shape[0] for traj in trajs]
-    save_histogram(lengths, "viz/lengths.png", bins=40)
+    save_histogram(lengths, VIZ_DIR + "lengths.png", bins=40)
     starting_positions = np.stack([traj['starting_position'][:2] for traj in trajs], axis=0)
-    save_point_distribution_image(starting_positions, "viz/starting_positions.png")
+    save_point_distribution_image(starting_positions, VIZ_DIR + "starting_positions.png")
     rewards = np.concatenate([traj['rewards'] for traj in trajs], axis=0)
     rewards = np.maximum(rewards, np.quantile(rewards, 0.01))
-    save_histogram(rewards, "viz/rewards.png", bins=100)
+    save_histogram(rewards, VIZ_DIR + "rewards.png", bins=100)
     for i in range(7):
         actions_1dim = np.concatenate([traj['actions'][:,i] for traj in trajs], axis=0)
         print(f"Action dim {i}: 10% = {np.quantile(actions_1dim, 0.1)}, 90% = {np.quantile(actions_1dim, 0.9)}")
         actions_1dim = np.clip(actions_1dim, np.quantile(actions_1dim, 0.01), np.quantile(actions_1dim, 0.99))
-        save_histogram(actions_1dim, f"viz/action_dim_{i}.png", bins=100)
+        save_histogram(actions_1dim, VIZ_DIR + f"action_dim_{i}.png", bins=100)
 
         sys_noise_1dim = np.array([traj['sys_noise'][i] for traj in trajs])
-        save_histogram(sys_noise_1dim, f"viz/sys_noise_{i}.png", bins=100)
+        save_histogram(sys_noise_1dim, VIZ_DIR + f"sys_noise_{i}.png", bins=100)
     pass
 
 if __name__ == "__main__":
