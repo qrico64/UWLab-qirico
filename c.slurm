@@ -1,3 +1,29 @@
+#!/bin/bash -l
+#SBATCH --job-name=jan15_data_collection        # Job name
+#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/job-1-0.0-0.0-10000/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/job-1-0.0-0.0-10000/%j_%x_err.txt         # Error file
+#SBATCH --time=12:00:00            # Time limit (hh:mm:ss)
+#SBATCH --nodes=1                  # Number of nodes
+#SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
+#SBATCH --cpus-per-task=10          # CPUs per task
+#SBATCH --gres=gpu:1               # GPUs per node (if needed)
+#SBATCH --mem=180G                  # Memory per node
+#SBATCH --partition=gpu-a40        # Partition (queue) name
+#SBATCH --account=weirdlab         # Slurm account/project name
+
+# Load environment
+cd /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico
+
+# Checks
+echo
+echo "Node: $(hostname)"
+which python
+python -V
+python -c "import sys, pprint; pprint.pprint(sys.path[:5])"
+echo
+echo
+
+# Run your program
 export UW_BASE=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/docker
 
 export APPTAINERENV_ISAACSIM_PATH=/isaac-sim/
@@ -23,7 +49,7 @@ apptainer exec --nv \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
-HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play2.py \
+/isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
   --checkpoint peg_state_rl_expert.pt \
   env.scene.insertive_object=peg \
@@ -31,7 +57,7 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 400 \
   --use_general_scales \
-  --sys_noise_scale 0.5 \
-  --rand_noise_scale 0.2 \
-  --num_trajectories 100000 \
+  --sys_noise_scale 0.0 \
+  --rand_noise_scale 0.0 \
+  --num_trajectories 10000 \
 '

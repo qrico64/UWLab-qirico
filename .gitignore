@@ -79,3 +79,5 @@ docker/isaac-cache-kit/Kit/
 docker/isaac-cache-kit/ogn_generated/
 trajectories*.pkl
 isaac-sim.action_and_event_data_generation.sh
+/job-*/
+/viz/

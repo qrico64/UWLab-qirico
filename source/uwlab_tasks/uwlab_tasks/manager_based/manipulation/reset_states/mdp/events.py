@@ -12,6 +12,7 @@ import tempfile
 import torch
 import trimesh
 import trimesh.transformations as tra
+import matplotlib.pyplot as plt
 
 import carb
 import isaaclab.sim as sim_utils
@@ -33,6 +34,60 @@ from uwlab_tasks.manager_based.manipulation.reset_states.mdp import utils
 
 from ..assembly_keypoints import Offset
 from .success_monitor_cfg import SuccessMonitorCfg
+
+
+def visualize_tensor_distribution(data, output_filename="distribution.png"):
+    """
+    Visualizes a (N, 2) torch Tensor using a 2D hexbin plot.
+    
+    Args:
+        data (torch.Tensor): Tensor of shape (N, 2)
+        output_filename (str): Path to save the resulting image.
+    """
+    # Ensure data is on CPU and converted to numpy for plotting
+    if data.is_cuda:
+        data = data.cpu()
+    
+    # Detach from graph if necessary and convert to numpy
+    points = data.detach().numpy()
+    x = points[:, 0]
+    y = points[:, 1]
+
+    plt.figure(figsize=(10, 8))
+    
+    # 'gridsize' controls the resolution of the bins. 
+    # 'cmap' defines the color palette (Magma/Viridis are great for density).
+    hb = plt.hexbin(x, y, gridsize=50, cmap='magma', bins='log')
+    
+    plt.colorbar(hb, label='Log10(count + 1)')
+    plt.xlabel('Dimension 1')
+    plt.ylabel('Dimension 2')
+    plt.title(f'2D Distribution Density (N={data.shape[0]})')
+    
+    # Clean up layout and save
+    plt.tight_layout()
+    plt.savefig(output_filename, dpi=300)
+    plt.close()
+    print(f"Visualization saved to {output_filename}")
+
+
+def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
+    """
+    x: torch.Tensor, shape (N, 2) on CPU or GPU
+    Saves a 2D histogram (density map) visualization to out_path.
+    """
+    x = x.detach()
+    if x.is_cuda:
+        x = x.cpu()
+    x = x.float()
+
+    fig, ax = plt.subplots()
+    ax.hist2d(x[:, 0].numpy(), x[:, 1].numpy(), bins=bins)
+    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("2D point distribution")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+
 
 
 class grasp_sampling_event(ManagerTermBase):
@@ -1028,8 +1083,17 @@ class MultiResetManager(ManagerTermBase):
                 raise FileNotFoundError(f"Dataset file {dataset_file} could not be accessed or downloaded.")
 
             dataset = torch.load(local_file_path)
-            num_states.append(len(dataset["initial_state"]["articulation"]["robot"]["joint_position"]))
-            init_indices = torch.arange(num_states[-1], device=env.device)
+            all_root_poses = torch.stack(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'], dim=0)
+            all_root_poses = all_root_poses[(all_root_poses[:, 0] > 0.3) & (all_root_poses[:, 0] < 0.55) & (all_root_poses[:, 1] > -0.1) & (all_root_poses[:, 1] < 0.5)]
+            save_point_distribution_image(all_root_poses, "processed_dist.png")
+            
+            # init_indices = all_root_poses[:, 0] < 0.425
+            # init_indices = (all_root_poses[:, 2] > 0.0014) & (all_root_poses[:, 2] < 0.0016)
+            # init_indices = torch.nonzero(init_indices).squeeze(-1).to(device=env.device)
+            init_indices = torch.arange(all_root_poses.shape[0], device=env.device)
+
+            print(f"For dataset {dataset_file}, loaded {len(init_indices)}/{all_root_poses.shape[0]}/{len(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'])} reset states!!!")
+            num_states.append(len(init_indices))
             self.datasets.append(sample_state_data_set(dataset, init_indices, env.device))
 
         # Normalize probabilities and store dataset lengths

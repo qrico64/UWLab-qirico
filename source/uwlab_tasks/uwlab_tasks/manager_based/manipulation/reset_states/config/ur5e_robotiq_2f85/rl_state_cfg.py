@@ -108,21 +108,21 @@ class RlStateSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    side_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/rgb_side_camera",
-        update_period=0,
-        height=224,
-        width=224,
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(1.65, 0, 0.15),
-            rot=(0.5, 0.5, 0.5, 0.5), # (w, x, y, z), -z direction.
-            convention="opengl",
-        ),
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=21.9
-        )
-    )
+    # side_camera = TiledCameraCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/rgb_side_camera",
+    #     update_period=0,
+    #     height=224,
+    #     width=224,
+    #     offset=TiledCameraCfg.OffsetCfg(
+    #         pos=(1.65, 0, 0.15),
+    #         rot=(0.5, 0.5, 0.5, 0.5), # (w, x, y, z), -z direction.
+    #         convention="opengl",
+    #     ),
+    #     data_types=["rgb"],
+    #     spawn=sim_utils.PinholeCameraCfg(
+    #         focal_length=21.9
+    #     )
+    # )
 
 
 @configclass
@@ -275,7 +275,7 @@ class TrainEventCfg(BaseEventCfg):
                 f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEGrasped",
                 f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectPartiallyAssembledEEGrasped",
             ],
-            "probs": [0.25, 0.25, 0.25, 0.25],
+            "probs": [1, 0, 0, 0],
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
         },
     )
@@ -367,6 +367,58 @@ class ObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
             self.history_length = 5
+
+    @configclass
+    class PolicyCfg2(ObsGroup):
+        """Observations for policy group."""
+
+        prev_actions = ObsTerm(func=task_mdp.last_action)
+
+        joint_pos = ObsTerm(func=task_mdp.joint_pos)
+
+        end_effector_pose = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame_with_metadata,
+            params={
+                "target_asset_cfg": SceneEntityCfg("robot", body_names="robotiq_base_link"),
+                "root_asset_cfg": SceneEntityCfg("robot"),
+                "target_asset_offset_metadata_key": "gripper_offset",
+                "root_asset_offset_metadata_key": "offset",
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        insertive_asset_pose = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame_with_metadata,
+            params={
+                "target_asset_cfg": SceneEntityCfg("insertive_object"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names="robotiq_base_link"),
+                "root_asset_offset_metadata_key": "gripper_offset",
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        receptive_asset_pose = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("receptive_object"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names="robotiq_base_link"),
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        insertive_asset_in_receptive_asset_frame: ObsTerm = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("insertive_object"),
+                "root_asset_cfg": SceneEntityCfg("receptive_object"),
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+            self.history_length = 1
 
     @configclass
     class CriticCfg(ObsGroup):
@@ -471,22 +523,23 @@ class ObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 1
 
-    @configclass
-    class RGBCfg(ObsGroup):        
-        side_rgb = ObsTerm(
-            func=task_mdp.process_image,
-            params={
-                "sensor_cfg": SceneEntityCfg("side_camera"),
-                "data_type": "rgb",
-                "process_image": True,
-                "output_size": (224, 224)
-            },
-        )
+    # @configclass
+    # class RGBCfg(ObsGroup):        
+    #     side_rgb = ObsTerm(
+    #         func=task_mdp.process_image,
+    #         params={
+    #             "sensor_cfg": SceneEntityCfg("side_camera"),
+    #             "data_type": "rgb",
+    #             "process_image": True,
+    #             "output_size": (224, 224)
+    #         },
+    #     )
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    rgb: RGBCfg = RGBCfg()
+    policy2: PolicyCfg2 = PolicyCfg2()
+    # rgb: RGBCfg = RGBCfg()
 
 
 @configclass
