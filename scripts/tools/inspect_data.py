@@ -1,3 +1,4 @@
+import os
 import pickle
 import numpy as np
 import torch
@@ -119,8 +120,10 @@ def plot_actions_tsne(actions, n_components=2, filename="tsne_plot.png"):
 
 
 def main():
-    VIZ_DIR = "viz/ynnn-02-0/"
-    with open("trajectories_ynnn-True-0.0-0.0-10000.pkl", "rb") as fi:
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/cut-trajectories_ynnn-True-2.0-0.0-20000.pkl"
+    VIZ_DIR = f"viz/{os.path.basename(FILENAME)[:-4]}/"
+    os.makedirs(VIZ_DIR, exist_ok=True)
+    with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
     lengths = [traj['actions'].shape[0] for traj in trajs]
     save_histogram(lengths, VIZ_DIR + "lengths.png", bins=40)
@@ -129,14 +132,23 @@ def main():
     rewards = np.concatenate([traj['rewards'] for traj in trajs], axis=0)
     rewards = np.maximum(rewards, np.quantile(rewards, 0.01))
     save_histogram(rewards, VIZ_DIR + "rewards.png", bins=100)
+    action_low = []
+    action_high = []
     for i in range(7):
         actions_1dim = np.concatenate([traj['actions'][:,i] for traj in trajs], axis=0)
+        action_low.append(round(np.quantile(actions_1dim, 0.1), 2))
+        action_high.append(round(np.quantile(actions_1dim, 0.9), 2))
         print(f"Action dim {i}: 10% = {np.quantile(actions_1dim, 0.1)}, 90% = {np.quantile(actions_1dim, 0.9)}")
         actions_1dim = np.clip(actions_1dim, np.quantile(actions_1dim, 0.01), np.quantile(actions_1dim, 0.99))
         save_histogram(actions_1dim, VIZ_DIR + f"action_dim_{i}.png", bins=100)
 
         sys_noise_1dim = np.array([traj['sys_noise'][i] for traj in trajs])
         save_histogram(sys_noise_1dim, VIZ_DIR + f"sys_noise_{i}.png", bins=100)
+    print(f"action low = {action_low}")
+    print(f"action high = {action_high}")
+    success = np.array([np.any(traj['rewards'] > 0.11) for traj in trajs])
+    success_rate = np.mean(success)
+    print(f"Success rate = {success_rate}")
     pass
 
 if __name__ == "__main__":
