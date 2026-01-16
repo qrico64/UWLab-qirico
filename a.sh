@@ -1,5 +1,6 @@
 eval "$(ssh-agent -s)"
 ssh-add
+conda activate pomdp10
 
 # export UW_BASE=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/docker
 # apptainer instance stop uw-lab-1
