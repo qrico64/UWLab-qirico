@@ -82,3 +82,4 @@ isaac-sim.action_and_event_data_generation.sh
 /job-*/
 /viz/
 /models/
+/experiments/

@@ -120,7 +120,7 @@ def plot_actions_tsne(actions, n_components=2, filename="tsne_plot.png"):
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/cut-trajectories_ynnn-True-2.0-0.0-20000.pkl"
+    FILENAME = "/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/cut-trajectories_jun16-True-2.0-0.0-40400.pkl"
     VIZ_DIR = f"viz/{os.path.basename(FILENAME)[:-4]}/"
     os.makedirs(VIZ_DIR, exist_ok=True)
     with open(FILENAME, "rb") as fi:
@@ -132,6 +132,7 @@ def main():
     rewards = np.concatenate([traj['rewards'] for traj in trajs], axis=0)
     rewards = np.maximum(rewards, np.quantile(rewards, 0.01))
     save_histogram(rewards, VIZ_DIR + "rewards.png", bins=100)
+    actions = np.concatenate([traj['actions'] for traj in trajs], axis=0)
     action_low = []
     action_high = []
     for i in range(7):
@@ -146,9 +147,12 @@ def main():
         save_histogram(sys_noise_1dim, VIZ_DIR + f"sys_noise_{i}.png", bins=100)
     print(f"action low = {action_low}")
     print(f"action high = {action_high}")
+    print(f"action mean = {actions.mean(axis=0).tolist()}")
+    print(f"action std = {actions.std(axis=0).tolist()}")
     success = np.array([np.any(traj['rewards'] > 0.11) for traj in trajs])
     success_rate = np.mean(success)
     print(f"Success rate = {success_rate}")
+    failed_sysnoise = np.stack([traj['sys_noise'] for traj in trajs], axis=0)[~success]
     pass
 
 if __name__ == "__main__":

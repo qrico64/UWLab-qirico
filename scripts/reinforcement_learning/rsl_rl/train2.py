@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,170 +6,293 @@ import numpy as np
 import pickle
 import wandb
 import random
+import math
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+import argparse
 
 
-ENABLE_WANDB = False
+ENABLE_WANDB = True
 
 
 # --- Model Definition ---
 
-class RobotTransformerPolicy(nn.Module):
-    def __init__(self, context_dim, current_dim, label_dim):
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
         super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))
+
+    def forward(self, x):
+        # x shape: (batch, seq_len, d_model)
+        x = x + self.pe[:, :x.size(1)]
+        return x
+
+class RobotTransformerPolicy(nn.Module):
+    def __init__(self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=256, dropout=0.1):
+        super().__init__()
+        self.context_proj = nn.Linear(context_dim, d_model)
+        self.ctx_norm = nn.LayerNorm(d_model)
+        self.current_proj = nn.Linear(current_dim, d_model)
+        self.curr_norm = nn.LayerNorm(d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
         
-        # GPT-2 Small Configs
-        self.n_embd = 768
-        self.n_head = 12
-        self.n_layer = 6
-        self.dropout = 0.1
-        
-        self.context_proj = nn.Linear(context_dim, self.n_embd)
-        self.current_proj = nn.Linear(current_dim, self.n_embd)
-        self.pos_emb = nn.Parameter(torch.zeros(1, 1024, self.n_embd))
-        
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=self.n_embd,
-            nhead=self.n_head,
-            dim_feedforward=4 * self.n_embd,
-            dropout=self.dropout,
-            activation='gelu',
-            batch_first=True,
-            norm_first=True 
+        encoder_layers = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=d_model*4, 
+            batch_first=True, dropout=dropout
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=self.n_layer)
-        
-        # Deterministic Policy Head
-        self.ffn = nn.Sequential(
-            nn.Linear(self.n_embd, self.n_embd * 2),
-            nn.GELU(),
-            nn.Linear(self.n_embd * 2, self.n_embd * 2),
-            nn.GELU(),
-            nn.Linear(self.n_embd * 2, self.n_embd),
-            nn.GELU(),
-            nn.Linear(self.n_embd, label_dim) # Direct prediction
+        self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
+        self.head = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, label_dim)
         )
 
-    def forward(self, context, current):
-        B, T, C = context.shape
-        T = T + 1
+    def forward(self, context, current, padding_mask=None):
+        ctx_emb = self.ctx_norm(self.context_proj(context))
+        ctx_emb = self.pos_encoder(ctx_emb)
         
-        # 1. Process Context and Combine with Current
-        context_feat = torch.cat([self.context_proj(context), self.current_proj(current).unsqueeze(1)], dim=1)
-        context_feat = context_feat + self.pos_emb[:, :T, :]
-        causal = torch.triu(torch.ones(T, T, device=context.device, dtype=torch.bool), diagonal=1)
-        context_out = self.transformer(context_feat, mask=causal)
+        # padding_mask: (Batch, Seq_Len)
+        ctx_out = self.transformer(ctx_emb, src_key_padding_mask=padding_mask)
         
-        # 2. Extract Last Token
-        context_emb = context_out[:, -1, :]
-        
-        # 3. Deterministic Output
-        prediction = self.ffn(context_emb)
-        return prediction
-
-# --- Training and Eval Functions ---
-
-def run_eval(model, val_data, device):
-    model.eval()
-    val_loss = 0
-    total_steps = 0
-    criterion = nn.MSELoss()
-    
-    with torch.no_grad():
-        for traj in val_data:
-            context_seq = torch.from_numpy(traj['context']).float().to(device)
-            current_vecs = torch.from_numpy(traj['current']).float().to(device)
-            labels = torch.from_numpy(traj['label']).float().to(device)
+        # IMPORTANT: When pooling, we must ignore the padded values
+        if padding_mask is not None:
+            # Mask the output to 0 before averaging
+            # ~padding_mask.unsqueeze(-1) flips True/False and adds a dim
+            ctx_out = ctx_out.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+            # Calculate actual lengths to get a true mean
+            lengths = (~padding_mask).sum(dim=1, keepdim=True)
+            ctx_agg = ctx_out.sum(dim=1) / lengths
+        else:
+            ctx_agg = torch.mean(ctx_out, dim=1)
             
-            for t in range(1, context_seq.shape[0]):
-                pred = model(context_seq[:t].unsqueeze(0), 
-                             current_vecs[t].unsqueeze(0))
-                
-                loss = criterion(pred, labels[t].unsqueeze(0))
-                val_loss += loss.item()
-                total_steps += 1
-                
-    return val_loss / max(1, total_steps)
+        curr_emb = self.curr_norm(self.current_proj(current))
+        combined = torch.cat([ctx_agg, curr_emb], dim=-1)
+        return self.head(combined)
 
-def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=1e-4, device='cuda'):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    criterion = nn.MSELoss()
+class IndependentTrajectoryDataset(Dataset):
+    def __init__(self, data):
+        """
+        data: List of dicts containing 'context', 'current', 'label', and 'choosable'
+        """
+        self.data = data
+        
+        # 1. Filter trajectories that can be used for Context & Labels
+        self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
+        
+        if len(self.choosable_trajs) == 0:
+            raise ValueError("No trajectories marked as 'choosable' found in the dataset.")
+
+        # 2. Flatten all states from ALL trajectories for 'current' sampling
+        self.all_currents = []
+        for traj in data:
+            # We take the current states from all trajectories, even unchoosable ones
+            self.all_currents.append(traj['current'])
+        
+        self.all_currents = np.concatenate(self.all_currents, axis=0)
+
+    def __len__(self):
+        # The epoch length is defined by how many choosable demonstration sequences we have
+        return len(self.choosable_trajs)
+
+    def __getitem__(self, idx):
+        # Get the context and label from a "choosable" trajectory
+        traj = self.choosable_trajs[idx]
+        context = torch.tensor(traj['context'], dtype=torch.float32)
+        label = torch.tensor(traj['label'], dtype=torch.float32)
+        
+        # Sample the "current" state from the global pool (includes unchoosable trajs)
+        random_idx = random.randint(0, len(self.all_currents) - 1)
+        current = torch.tensor(self.all_currents[random_idx], dtype=torch.float32)
+        
+        return context, current, label
+
+def collate_fn(batch):
+    """
+    Custom collator to pad trajectories of different lengths.
+    """
+    contexts, currents, labels = zip(*batch)
     
+    # Pad sequences to the max length in this specific batch
+    # padded_contexts shape: (Batch, Max_T, Context_Dim)
+    padded_contexts = torch.nn.utils.rnn.pad_sequence(contexts, batch_first=True)
+    
+    # Create a mask: True for padded positions, False for real data
+    # This is for PyTorch's src_key_padding_mask
+    padding_mask = torch.zeros(padded_contexts.shape[0], padded_contexts.shape[1], dtype=torch.bool)
+    for i, ctx in enumerate(contexts):
+        padding_mask[i, len(ctx):] = True
+        
+    currents = torch.stack(currents)
+    labels = torch.stack(labels)
+    
+    return padded_contexts, currents, labels, padding_mask
+
+def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=1e-4, batch_size=64, device="cuda",
+        save_path=None):
+    train_loader = DataLoader(
+        IndependentTrajectoryDataset(train_data), 
+        batch_size=batch_size, shuffle=True, num_workers=4, 
+        collate_fn=collate_fn, pin_memory=True
+    )
+    val_loader = DataLoader(
+        IndependentTrajectoryDataset(val_data), 
+        batch_size=batch_size, shuffle=False, num_workers=4, 
+        collate_fn=collate_fn, pin_memory=True
+    )
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    criterion = nn.MSELoss()
+    # Learning rate scheduler for better convergence
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
     for epoch in range(epochs):
         model.train()
-        train_epoch_loss = 0
-        total_steps = 0
+        train_loss = 0
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         
-        for traj in train_data:
-            context_seq = torch.from_numpy(traj['context']).float().to(device)
-            current_vecs = torch.from_numpy(traj['current']).float().to(device)
-            labels = torch.from_numpy(traj['label']).float().to(device)
+        for context, current, label, padding_mask in pbar:
+            context, current, label = context.to(device), current.to(device), label.to(device)
+            padding_mask = padding_mask.to(device)
             
-            traj_loss = 0
-            for t in range(1, context_seq.shape[0]):
-                pred = model(context_seq[:t].unsqueeze(0), 
-                             current_vecs[t].unsqueeze(0))
-                
-                loss = criterion(pred, labels[t].unsqueeze(0))
-                traj_loss += loss
-                total_steps += 1
+            optimizer.zero_grad()
+            pred = model(context, current, padding_mask)
+            loss = criterion(pred, label)
             
-            if context_seq.shape[0] > 1:
-                optimizer.zero_grad()
-                # Gradient based on trajectory average
-                (traj_loss / (context_seq.shape[0] - 1)).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                train_epoch_loss += traj_loss.item()
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-        avg_train_loss = train_epoch_loss / max(1, total_steps)
-        avg_val_loss = run_eval(model, val_data, device)
+        # Validation phase
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for context, current, label, padding_mask in val_loader:
+                context, current, label = context.to(device), current.to(device), label.to(device)
+                padding_mask = padding_mask.to(device)
+                pred = model(context, current, padding_mask)
+                vloss = criterion(pred, label)
+                val_loss += vloss.item()
+
+        avg_train_loss = train_loss / len(train_loader)
+        avg_val_loss = val_loss / len(val_loader)
+        scheduler.step()
+
+        print(f"Summary - Train: {avg_train_loss:.6f} | Val: {avg_val_loss:.6f}")
         
-        print(f"Epoch {epoch+1} | Train MSE: {avg_train_loss:.6f} | Val MSE: {avg_val_loss:.6f}")
         if ENABLE_WANDB:
+            import wandb
             wandb.log({
-                "epoch": epoch + 1, 
-                "train_mse": avg_train_loss, 
-                "val_mse": avg_val_loss
+                "epoch": epoch,
+                "train_loss": avg_train_loss,
+                "val_loss": avg_val_loss,
+                "lr": optimizer.param_groups[0]['lr']
             })
+        
+        if epoch % 50 == 49 and save_path is not None:
+            csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
+            torch.save(model.state_dict(), csp)
+            print(f"Model at epoch {epoch} saved to {csp}")
+    
+    if save_path is not None:
+        csp = os.path.join(save_path, f"{epochs}-ckpt.pt")
+        torch.save(model.state_dict(), csp)
+        print(f"Model at epoch {epochs} saved to {csp}")
+
+def load_robot_policy(save_path, device="cpu"):
+    with open(os.path.join(os.path.dirname(save_path), "info.pkl"), "rb") as fi:
+        save_dict = pickle.load(fi)
+    model = RobotTransformerPolicy(save_dict['context_dim'], save_dict['current_dim'], save_dict['label_dim'])
+    model.load_state_dict(torch.load(save_path, map_location=device))
+    model.to(device)
+    model.eval()
+    return model, save_dict["act_stds"]
 
 # --- Main ---
 
 def main():
-    LR = 1e-4
-    EPOCHS = 100
-    if ENABLE_WANDB:
-        wandb.init(project="robot-transformer-bc-deterministic", config={"lr": LR, "epochs": EPOCHS})
+    parser = argparse.ArgumentParser(description="Train Robot Transformer Policy")
+    
+    # Adding parameters
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--action_low", type=float, default=-0.999, help="Minimum action value")
+    parser.add_argument("--action_high", type=float, default=0.999, help="Maximum action value")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--d_model", type=int, default=256, help="Transformer & MLP hidden dimension")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers")
+    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
+    parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
+    
+    args = parser.parse_args()
 
-    # Adjust dimensions here based on your data source
+    # Accessing the parameters
+    LR = args.lr
+    EPOCHS = args.epochs
+    ACTION_LOW = args.action_low
+    ACTION_HIGH = args.action_high
+    BATCH_SIZE = args.batch_size
+
+    D_MODEL = args.d_model
+    NUM_LAYERS = args.num_layers
+    DROPOUT = args.dropout
+
+    save_path = args.save_path
+    
     CONTEXT_DIM = 45 + 7
     CURRENT_DIM = 45
     LABEL_DIM = 7
-    ACTION_LOW = -0.999
-    ACTION_HIGH = 0.999
-    # CONTEXT_DIM = 1
-    # CURRENT_DIM = 1
-    # LABEL_DIM = 1
+
+    if ENABLE_WANDB:
+        wandb.init(project="robot-transformer-bc-deterministic", config=vars(args))
 
     trajs = []
     try:
-        with open("trajectories_ynnn-True-0.0-0.0-10000.pkl", "rb") as fi:
+        with open("cut-trajectories_jun16-True-2.0-0.0-40400.pkl", "rb") as fi:
             trajs += pickle.load(fi)
     except FileNotFoundError:
         print("Data file not found.")
         return
+    print("Loaded dataset.")
     
     
-    action_means = np.concatenate([traj['actions'] for traj in trajs], axis=0)
-    action_high = [8.54, 7.43, 6.33, 16.72, 30.75, 8.65, 15.46]
-    action_low = [-7.84, -10.23, -7.54, -25.27, -35.54, -6.72, -16.17]
-    print(f"Action high = {action_high}")
-    print(f"Action low = {action_low}")
-    action_high = np.array(action_high, dtype=np.float32)
-    action_low = np.array(action_low, dtype=np.float32)
-    assert np.all(np.quantile(action_means, 0.8, axis=0) < action_high) and np.all(np.quantile(action_means, 0.2, axis=0) > action_low)
+    all_actions = np.concatenate([traj['actions'] for traj in trajs], axis=0)
+    act_means = all_actions.mean(axis=0)
+    act_stds = all_actions.std(axis=0)
+    print(f"Action means = {act_means.tolist()}")
+    print(f"Action stds = {act_stds.tolist()}")
     for traj in trajs:
-        traj['actions'] = np.clip((traj['actions'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, ACTION_LOW, ACTION_HIGH)
-        traj['actions_expert'] = np.clip((traj['actions_expert'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, ACTION_LOW, ACTION_HIGH)
+        traj['actions'] = (traj['actions'] - act_means) / act_stds
+        traj['actions_expert'] = (traj['actions_expert'] - act_means) / act_stds
+        traj['sys_noise'] = traj['sys_noise'] / act_stds
+    # action_high = [8.54, 7.43, 6.33, 16.72, 30.75, 8.65, 15.46]
+    # action_low = [-7.84, -10.23, -7.54, -25.27, -35.54, -6.72, -16.17]
+    # print(f"Action high = {action_high}")
+    # print(f"Action low = {action_low}")
+    # action_high = np.array(action_high, dtype=np.float32)
+    # action_low = np.array(action_low, dtype=np.float32)
+    # assert np.all(np.quantile(action_means, 0.8, axis=0) < action_high) and np.all(np.quantile(action_means, 0.2, axis=0) > action_low)
+    # for traj in trajs:
+    #     traj['actions'] = np.clip((traj['actions'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, ACTION_LOW, ACTION_HIGH)
+    #     traj['actions_expert'] = np.clip((traj['actions_expert'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, ACTION_LOW, ACTION_HIGH)
+    #     traj['sys_noise'] = traj['sys_noise'] / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW)
+
+    save_dict = {
+        'act_means': act_means.tolist(),
+        'act_stds': act_stds.tolist(),
+        'context_dim': CONTEXT_DIM,
+        'current_dim': CURRENT_DIM,
+        'label_dim': LABEL_DIM,
+    }
+    os.makedirs(save_path, exist_ok=True)
+    with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
+        pickle.dump(save_dict, fi)
 
     processed_data = []
     for traj in trajs:
@@ -178,32 +302,49 @@ def main():
         processed_data.append({
             'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
             'current': traj['obs']['policy2'],
-            'label': traj['actions'],
+            'label': traj['sys_noise'],
+            'choosable': not np.any(traj['rewards'] > 0.11),
         })
-        # n = traj['rewards'].shape[0]
-        # arr = np.random.random(size=(n, 1))
+        # CONTEXT_DIM = 3
+        # CURRENT_DIM = 2
+        # LABEL_DIM = 3
+        # n = np.random.randint(15, 160)
+        # debug_context = np.random.randn(n, CONTEXT_DIM)
         # processed_data.append({
-        #     'context': np.random.random(size=(n, 1)),
-        #     'current': np.random.random(size=(n, 1)),
-        #     'label': np.random.random(size=(n, 1)),
+        #     'context': debug_context,
+        #     'current': np.random.randn(n, CURRENT_DIM),
+        #     'label': debug_context.mean(axis=0)[:LABEL_DIM]
         # })
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
     assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
     assert processed_data[0]['label'].shape[-1] == LABEL_DIM
+
+    num_choosable = sum(1 for d in processed_data if d['choosable'])
+    print(f"Total Trajectories: {len(processed_data)}")
+    print(f"Choosable Trajectories: {num_choosable}")
+    
+    if num_choosable == 0:
+        print("Error: No choosable trajectories found. Check reward thresholds.")
+        return
 
     random.shuffle(processed_data)
     split = int(len(processed_data) * 0.8)
     train_data = processed_data[:split]
     val_data = processed_data[split:]
 
+    # Final safeguard: ensure both splits have at least one choosable traj
+    if not any(d['choosable'] for d in val_data):
+        print("Warning: Validation set has no choosable trajectories. Re-shuffling...")
+        # In a real scenario, you might want a Stratified Split here
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = RobotTransformerPolicy(CONTEXT_DIM, CURRENT_DIM, LABEL_DIM)
+    model = RobotTransformerPolicy(CONTEXT_DIM, CURRENT_DIM, LABEL_DIM, num_layers=NUM_LAYERS, d_model=D_MODEL, dropout=DROPOUT)
     model.to(device)
     if ENABLE_WANDB:
         wandb.watch(model)
 
     try:
-        train_behavior_cloning(model, train_data, val_data, epochs=EPOCHS, lr=LR, device=device)
+        train_behavior_cloning(model, train_data, val_data, epochs=EPOCHS, lr=LR, batch_size=BATCH_SIZE, device=device, save_path=save_path)
     finally:
         if ENABLE_WANDB:
             wandb.finish()
