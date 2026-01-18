@@ -41,6 +41,7 @@ parser.add_argument("--sys_noise_scale", type=float, default=0, help="Scale of s
 parser.add_argument("--rand_noise_scale", type=float, default=0, help="Scale of random noise.")
 parser.add_argument("--record_path", type=str, default="trajectories_ynnn.pkl", help="Path to save the recorded trajectories.")
 parser.add_argument("--num_trajectories", type=int, default=10, help="Number of trajectories to record.")
+parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -117,6 +118,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     log_dir = os.path.dirname(resume_path)
     env_cfg.log_dir = log_dir
+
+    # set horizon
+    env_cfg.episode_length_s = args_cli.horizon / 10
+    print(f"Horizon: {args_cli.horizon}")
 
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if isinstance(env.unwrapped, DirectMARLEnv):

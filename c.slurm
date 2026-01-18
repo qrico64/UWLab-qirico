@@ -1,13 +1,13 @@
 #!/bin/bash -l
-#SBATCH --job-name=jan15_data_collection        # Job name
-#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/job-1-0.0-0.0-10000/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/job-1-0.0-0.0-10000/%j_%x_err.txt         # Error file
+#SBATCH --job-name=jan17_data_collection        # Job name
+#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/job-1-4.0-0.0-60000-60/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/job-1-4.0-0.0-60000-60/%j_%x_err.txt         # Error file
 #SBATCH --time=12:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
-#SBATCH --cpus-per-task=10          # CPUs per task
+#SBATCH --cpus-per-task=6          # CPUs per task
 #SBATCH --gres=gpu:1               # GPUs per node (if needed)
-#SBATCH --mem=180G                  # Memory per node
+#SBATCH --mem=123G                  # Memory per node
 #SBATCH --partition=gpu-a40        # Partition (queue) name
 #SBATCH --account=weirdlab         # Slurm account/project name
 
@@ -57,7 +57,9 @@ apptainer exec --nv \
   --headless \
   --num_envs 400 \
   --use_general_scales \
-  --sys_noise_scale 0.0 \
+  --sys_noise_scale 4.0 \
   --rand_noise_scale 0.0 \
-  --num_trajectories 10000 \
+  --num_trajectories 60000 \
+  --horizon 60 \
+  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/trajectories_jan17.pkl \
 '
