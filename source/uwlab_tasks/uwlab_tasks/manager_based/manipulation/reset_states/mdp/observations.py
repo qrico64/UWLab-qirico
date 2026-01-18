@@ -243,7 +243,7 @@ def process_image(
 
     if current_size != output_size:
         # Perform resize operation
-        images = F.interpolate(images, size=output_size, mode="bilinear", antialias=True)
+        images = torch.nn.functional.interpolate(images, size=output_size, mode="bilinear", antialias=True)
 
     # rgb/depth image normalization
     if not process_image:

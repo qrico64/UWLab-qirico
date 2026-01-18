@@ -8,3 +8,4 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
     env.scene.receptive_object=peghole \
     --headless \
     --enable_cameras \
+    --horizon 60 \

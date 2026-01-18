@@ -523,17 +523,17 @@ class ObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 1
 
-    # @configclass
-    # class RGBCfg(ObsGroup):        
-    #     side_rgb = ObsTerm(
-    #         func=task_mdp.process_image,
-    #         params={
-    #             "sensor_cfg": SceneEntityCfg("side_camera"),
-    #             "data_type": "rgb",
-    #             "process_image": True,
-    #             "output_size": (224, 224)
-    #         },
-    #     )
+    @configclass
+    class RGBCfg(ObsGroup):        
+        side_rgb = ObsTerm(
+            func=task_mdp.process_image,
+            params={
+                "sensor_cfg": SceneEntityCfg("side_camera"),
+                "data_type": "rgb",
+                "process_image": True,
+                "output_size": (224, 224)
+            },
+        )
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()

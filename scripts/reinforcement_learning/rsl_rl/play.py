@@ -74,6 +74,9 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 
+from isaaclab.sensors import TiledCamera, TiledCameraCfg, save_images_to_file
+import isaaclab.sim as sim_utils
+
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
@@ -146,6 +149,29 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set horizon
     env_cfg.episode_length_s = args_cli.horizon / 10 # don't know where the 10 came from
     print(f"Horizon: {args_cli.horizon}")
+
+    # set camera & video
+    if hasattr(args_cli, "enable_cameras") and args_cli.enable_cameras:
+        IMAGE_SIZE = (400, 400)
+        assert IMAGE_SIZE[0] == IMAGE_SIZE[1]
+        env_cfg.scene.side_camera = TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/rgb_side_camera",
+            update_period=0,
+            height=IMAGE_SIZE[0],
+            width=IMAGE_SIZE[1],
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=(1.65, 0, 0.15),
+                rot=(0.5, 0.5, 0.5, 0.5), # (w, x, y, z), -z direction.
+                convention="opengl",
+            ),
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=21.9
+            )
+        )
+        env_cfg.observations.rgb = env_cfg.observations.RGBCfg()
+        env_cfg.observations.rgb.side_rgb.params['output_size'] = IMAGE_SIZE
+        print(f"Video generation on at size/resolution {IMAGE_SIZE}")
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -230,12 +256,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             frame = obs['rgb'][0].cpu().detach().numpy().transpose(1, 2, 0)
             
             # 2. Rescale if needed (assuming 0-1 float to 0-255 uint8)
-            if frame.max() <= 1.0:
+            if frame.max() <= 1.0 + 1e-4:
                 frame = (frame * 255).astype(np.uint8)
             
             # 3. Add text using PIL
             img = Image.fromarray(frame)
-            img = img.resize((400, 400), Image.Resampling.LANCZOS)
+            if frame.shape != (*IMAGE_SIZE, 3):
+                img = img.resize(IMAGE_SIZE, Image.Resampling.LANCZOS)
             draw = ImageDraw.Draw(img)
             # Draw black text at (5, 5)
             draw.text((5, 5), f"t={timestep} r={reward_val:.5f} done={done_val}", fill=(0, 0, 0))
