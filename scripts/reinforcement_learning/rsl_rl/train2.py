@@ -212,7 +212,7 @@ def load_robot_policy(save_path, device="cpu"):
     model.load_state_dict(torch.load(save_path, map_location=device))
     model.to(device)
     model.eval()
-    return model, save_dict["act_stds"]
+    return model, save_dict
 
 # --- Main ---
 
@@ -229,6 +229,7 @@ def main():
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
+    parser.add_argument("--dataset_path", type=str, default="N/A", help="Path to load the dataset")
     
     args = parser.parse_args()
 
@@ -250,11 +251,13 @@ def main():
     LABEL_DIM = 7
 
     if ENABLE_WANDB:
-        wandb.init(project="robot-transformer-bc-deterministic", config=vars(args))
+        wandb.init(project="robot-transformer-bc-deterministic-normalized-labels", config=vars(args))
+    
+    DATASET_PATH = args.dataset_path
 
     trajs = []
     try:
-        with open("cut-trajectories_jun16-True-2.0-0.0-40400.pkl", "rb") as fi:
+        with open(DATASET_PATH, "rb") as fi:
             trajs += pickle.load(fi)
     except FileNotFoundError:
         print("Data file not found.")
@@ -262,15 +265,11 @@ def main():
     print("Loaded dataset.")
     
     
-    all_actions = np.concatenate([traj['actions'] for traj in trajs], axis=0)
-    act_means = all_actions.mean(axis=0)
-    act_stds = all_actions.std(axis=0)
-    print(f"Action means = {act_means.tolist()}")
-    print(f"Action stds = {act_stds.tolist()}")
-    for traj in trajs:
-        traj['actions'] = (traj['actions'] - act_means) / act_stds
-        traj['actions_expert'] = (traj['actions_expert'] - act_means) / act_stds
-        traj['sys_noise'] = traj['sys_noise'] / act_stds
+    all_labels = np.concatenate([traj['actions_expert'] - traj['actions'] for traj in trajs], axis=0)
+    label_means = all_labels.mean(axis=0)
+    label_stds = all_labels.std(axis=0)
+    print(f"Label means = {label_means.tolist()}")
+    print(f"Label stds = {label_stds.tolist()}")
     # action_high = [8.54, 7.43, 6.33, 16.72, 30.75, 8.65, 15.46]
     # action_low = [-7.84, -10.23, -7.54, -25.27, -35.54, -6.72, -16.17]
     # print(f"Action high = {action_high}")
@@ -284,11 +283,13 @@ def main():
     #     traj['sys_noise'] = traj['sys_noise'] / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW)
 
     save_dict = {
-        'act_means': act_means.tolist(),
-        'act_stds': act_stds.tolist(),
+        'label_stds': label_stds.tolist(),
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
         'label_dim': LABEL_DIM,
+        'use_noise_scales': eval(os.path.basename(DATASET_PATH)[:-4].split('-')[-4]),
+        'sys_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-3]),
+        'rand_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-2]), # TODO this is bad practice
     }
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
@@ -302,7 +303,7 @@ def main():
         processed_data.append({
             'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
             'current': traj['obs']['policy2'],
-            'label': traj['sys_noise'],
+            'label': (traj['actions_expert'] - traj['actions']).mean(axis=0) / label_stds,
             'choosable': not np.any(traj['rewards'] > 0.11),
         })
         # CONTEXT_DIM = 3

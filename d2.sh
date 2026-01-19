@@ -23,15 +23,12 @@ apptainer exec --nv \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
-HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play2.py \
+HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
   --checkpoint peg_state_rl_expert.pt \
   env.scene.insertive_object=peg \
   env.scene.receptive_object=peghole \
   --headless \
-  --num_envs 400 \
-  --use_general_scales \
-  --sys_noise_scale 0.5 \
-  --rand_noise_scale 0.2 \
-  --num_trajectories 100000 \
+  --num_envs 100 \
+  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/jan18_fixnormalization_sysnoise-0.4-transformer-256-4-0.1/300-ckpt.pt
 '
