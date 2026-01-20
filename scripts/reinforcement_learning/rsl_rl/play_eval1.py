@@ -101,6 +101,21 @@ def save_video(frames, path, fps=30):
     writer.close()
     print(f"[INFO] Video saved successfully.")
 
+def get_positions(env: ManagerBasedEnv):
+    asset = env.scene["receptive_object"]
+    positions = asset.data.root_pos_w
+    orientations = asset.data.root_quat_w
+    return torch.cat([positions, orientations], dim=-1)
+
+def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
+    asset = env.scene["receptive_object"]
+    positions = asset.data.root_pos_w
+    orientations = asset.data.root_quat_w
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    positions_orientations = torch.cat([positions, orientations], dim=-1)
+    positions_orientations[env_id] = position
+    asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
+
 
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
@@ -258,6 +273,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         count_success_first_try_video = 0
         count_success_second_try_video = 0
         count_failed_video = 0
+    
+    starting_positions = get_positions(env.env.env)
 
     # reset environment
 
@@ -354,8 +371,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         successes[i] = False
                         curstates[i] *= 0
                         sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                        starting_positions[i] = get_positions(env.env.env)[i]
                     else:
                         curstates[i] += 1
+                        set_positions(env.env.env, starting_positions[i], i)
         
         if args_cli.enable_cameras and count_success_first_try_video >= NUM_VIDEOS and count_success_second_try_video >= NUM_VIDEOS and count_failed_video >= NUM_VIDEOS:
             break
