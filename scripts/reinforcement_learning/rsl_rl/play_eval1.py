@@ -27,7 +27,7 @@ parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
 )
-parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+parser.add_argument("--seed", type=int, default=44, help="Seed used for the environment")
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
@@ -71,6 +71,7 @@ from isaaclab.envs import (
     DirectRLEnvCfg,
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
+    ManagerBasedEnv,
 )
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
@@ -93,6 +94,7 @@ from train2 import RobotTransformerPolicy, load_robot_policy
 def save_video(frames, path, fps=30):
     """Saves a list of frames (numpy arrays) to a video file."""
     print(f"[INFO] Saving video to {path}...")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     writer = imageio.get_writer(path, fps=fps)
     for frame in frames:
         writer.append_data(frame)
@@ -231,11 +233,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
     assert correction_model_info['label_dim'] == A_DIM
 
-    timesteps = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
-    successes = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
-    rec_observations = torch.zeros(env.num_envs, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=args_cli.device)
-    rec_actions = torch.zeros(env.num_envs, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
-    rec_rewards = torch.zeros(env.num_envs, T_DIM, dtype=torch.float32, device=args_cli.device)
+    N_DIM = 2
+    timesteps = torch.zeros(env.num_envs, N_DIM, dtype=torch.int64, device=args_cli.device)
+    successes = torch.zeros(env.num_envs, N_DIM, dtype=torch.bool, device=args_cli.device)
+    rec_observations = torch.zeros(env.num_envs, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=args_cli.device)
+    rec_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
+    rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
     curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
     obs = env.get_observations()
 
@@ -245,6 +248,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=args_cli.device)
     sys_noises = torch.randn(env.num_envs, A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
     print(f"Using noise of {correction_model_info['sys_noise_scale']}")
+
+    if args_cli.enable_cameras:
+        rec_video = np.zeros((env.num_envs, 2, T_DIM, *IMAGE_SIZE, 3), dtype=np.uint8)
+        VIDEO_PATH = "./viz/sysnoise-0.3-fps5/video.mp4"
+        videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
+        NUM_VIDEOS = 3
+        VIDEO_FPS = 5
+        count_success_first_try_video = 0
+        count_success_second_try_video = 0
+        count_failed_video = 0
 
     # reset environment
 
@@ -258,25 +271,40 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # find actions
             base_actions = policy(obs)
             base_actions += sys_noises
-            need_residuals = curstates > 0
-            need_residuals_count = need_residuals.sum()
-            if need_residuals_count > 0:
-                contexts = torch.cat([rec_observations[need_residuals, :, :], rec_actions[need_residuals, :, :]], dim=2)
-                currents = obs['policy2'][need_residuals].clone()
-                padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals].unsqueeze(1)
-                residual_actions = correction_model(contexts, currents, padding_mask)
-                base_actions[need_residuals, :] += residual_actions * action_multiplier
+            # need_residuals = curstates > 0
+            # need_residuals_count = need_residuals.sum()
+            # if need_residuals_count > 0:
+            #     contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
+            #     currents = obs['policy2'][need_residuals].clone()
+            #     padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
+            #     residual_actions = correction_model(contexts, currents, padding_mask)
+            #     base_actions[need_residuals, :] += residual_actions * action_multiplier
             
             # step
             next_obs, reward, dones, info = env.step(base_actions)
 
             # handle non-dones
-            recording_indices = torch.arange(env.num_envs, device=args_cli.device)[curstates == 0]
-            rec_observations[recording_indices, timesteps[curstates == 0], :] = obs['policy2'][curstates == 0]
-            rec_actions[recording_indices, timesteps[curstates == 0], :] = base_actions[curstates == 0]
-            rec_rewards[recording_indices, timesteps[curstates == 0]] = reward[curstates == 0]
-            timesteps[curstates == 0] += 1
-            successes = successes | (reward > 0.11)
+            indices = torch.arange(env.num_envs, device=args_cli.device)
+            cur_timesteps = timesteps[indices, curstates]
+            rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
+            rec_actions[indices, curstates, cur_timesteps, :] = base_actions
+            rec_rewards[indices, curstates, cur_timesteps] = reward
+            successes[indices, curstates] |= reward > 0.11
+
+            if args_cli.enable_cameras:
+                frames = obs['rgb'].cpu().detach().numpy().transpose(0, 2, 3, 1)
+                if frames.max() <= 1.0 + 1e-4:
+                    frames = (frames * 255).astype(np.uint8)
+                
+                for i in range(env.num_envs):
+                    img = Image.fromarray(frames[i])
+                    if frames[i].shape != (*IMAGE_SIZE, 3):
+                        img = img.resize(IMAGE_SIZE, Image.Resampling.LANCZOS)
+                    draw = ImageDraw.Draw(img)
+                    draw.text((5, 5), f"t={timesteps[i]} r={reward[i]:.5f} done={dones[i]}", fill=(0, 0, 0))
+                    rec_video[i, curstates[i], timesteps[i, curstates[i]]] = np.array(img)
+            
+            timesteps[indices, curstates] += 1
             obs = next_obs
 
             # handle dones
@@ -285,11 +313,34 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 for i in range(env.num_envs):
                     if not dones[i]:
                         continue
-                    if curstates[i] > 0 or successes[i]:
+                    if curstates[i] > 0 or successes[i, curstates[i]]:
                         count_completed += 1
-                        count_success_first_try += curstates[i] == 0 and successes[i]
-                        count_success_second_try += curstates[i] == 1 and successes[i]
+                        count_success_first_try += curstates[i] == 0 and successes[i, curstates[i]]
+                        count_success_second_try += curstates[i] == 1 and successes[i, curstates[i]]
                         # print(f"Environment {i} has finished with {['fail', 'success'][successes[i]]} at stage {curstates[i]}")
+
+                        if args_cli.enable_cameras:
+                            if curstates[i] == 0 and successes[i, curstates[i]]:
+                                # first try success
+                                if count_success_first_try_video < NUM_VIDEOS:
+                                    videopath = videopath_generator(0, count_success_first_try_video)
+                                    frames = rec_video[i, curstates[i], :timesteps[i, curstates[i]]]
+                                    save_video(frames, videopath, fps=VIDEO_FPS)
+                                    count_success_first_try_video += 1
+                            elif curstates[i] == 1 and successes[i, curstates[i]]:
+                                # second try success
+                                if count_success_second_try_video < NUM_VIDEOS:
+                                    videopath = videopath_generator(1, count_success_second_try_video)
+                                    frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
+                                    save_video(frames, videopath, fps=VIDEO_FPS)
+                                    count_success_second_try_video += 1
+                            else:
+                                # failed
+                                if count_failed_video < NUM_VIDEOS:
+                                    videopath = videopath_generator(-1, count_failed_video)
+                                    frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
+                                    save_video(frames, videopath, fps=VIDEO_FPS)
+                                    count_failed_video += 1
 
                         if count_completed % 20 == 0:
                             print(f"First try success rate: {count_success_first_try / count_completed}; Second try success rate: {count_success_second_try / (count_completed - count_success_first_try)}")
@@ -300,12 +351,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         rec_actions[i] *= 0
                         rec_rewards[i] *= 0
                         timesteps[i] *= 0
-                        successes[i] *= 0
+                        successes[i] = False
                         curstates[i] *= 0
                         sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
                     else:
                         curstates[i] += 1
-                        successes[i] *= 0
+        
+        if args_cli.enable_cameras and count_success_first_try_video >= NUM_VIDEOS and count_success_second_try_video >= NUM_VIDEOS and count_failed_video >= NUM_VIDEOS:
+            break
     
     # close the simulator
     env.close()
