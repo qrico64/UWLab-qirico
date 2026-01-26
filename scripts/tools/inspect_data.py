@@ -120,7 +120,7 @@ def plot_actions_tsne(actions, n_components=2, filename="tsne_plot.png"):
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/cut-trajectories_jun16-True-2.0-0.0-40400.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/job-True-0.0-0.0-60000--0.0-0.05/cut-trajectories_jan22-True-0.0-0.0-60000--0.0-0.05.pkl"
     VIZ_DIR = f"viz/{os.path.basename(FILENAME)[:-4]}/"
     os.makedirs(VIZ_DIR, exist_ok=True)
     with open(FILENAME, "rb") as fi:
@@ -135,16 +135,34 @@ def main():
     actions = np.concatenate([traj['actions'] for traj in trajs], axis=0)
     action_low = []
     action_high = []
+    expert_actions = np.concatenate([traj['actions_expert'] for traj in trajs], axis=0)
+    residual_actions = expert_actions - actions
+    
+    sys_noise = np.array([traj['sys_noise'] for traj in trajs])
+    obs_receptive_noise = np.array([traj['obs_receptive_noise'] for traj in trajs])
+    obs_insertive_noise = np.array([traj['obs_insertive_noise'] for traj in trajs])
+
     for i in range(7):
-        actions_1dim = np.concatenate([traj['actions'][:,i] for traj in trajs], axis=0)
+        actions_1dim = actions[:, i]
         action_low.append(round(np.quantile(actions_1dim, 0.1), 2))
         action_high.append(round(np.quantile(actions_1dim, 0.9), 2))
         print(f"Action dim {i}: 10% = {np.quantile(actions_1dim, 0.1)}, 90% = {np.quantile(actions_1dim, 0.9)}")
         actions_1dim = np.clip(actions_1dim, np.quantile(actions_1dim, 0.01), np.quantile(actions_1dim, 0.99))
         save_histogram(actions_1dim, VIZ_DIR + f"action_dim_{i}.png", bins=100)
 
-        sys_noise_1dim = np.array([traj['sys_noise'][i] for traj in trajs])
+        sys_noise_1dim = sys_noise[:, i]
         save_histogram(sys_noise_1dim, VIZ_DIR + f"sys_noise_{i}.png", bins=100)
+
+        residual_actions_1dim = residual_actions[:, i]
+        save_histogram(residual_actions_1dim, VIZ_DIR + f"residual_action_{i}.png", bins=100)
+    
+    for i in range(6):
+        obs_receptive_noise_1dim = obs_receptive_noise[:, i]
+        save_histogram(obs_receptive_noise_1dim, VIZ_DIR + f"obs_receptive_noise_{i}.png", bins=100)
+
+        obs_insertive_noise_1dim = obs_insertive_noise[:, i]
+        save_histogram(obs_insertive_noise_1dim, VIZ_DIR + f"obs_insertive_noise_{i}.png", bins=100)
+    
     print(f"action low = {action_low}")
     print(f"action high = {action_high}")
     print(f"action mean = {actions.mean(axis=0).tolist()}")

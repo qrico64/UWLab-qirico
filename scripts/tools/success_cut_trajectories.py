@@ -6,13 +6,15 @@ import os
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/trajectories_ynnn-True-2.0-0.0-20000.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan25/job_jan25-True-0.0-0.0-60000--0.03-0.0/trajectories.pkl"
     SAVEFILE = os.path.join(os.path.dirname(FILENAME), "cut-" + os.path.basename(FILENAME))
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
+    success_count = 0
     for traj in trajs:
         rewards = traj['rewards']
         if np.any(rewards > 0.11):
+            success_count += 1
             cutoff = np.argmax(rewards > 0.11) + 1
         else:
             cutoff = rewards.shape[0]
@@ -24,6 +26,7 @@ def main():
             traj['next_obs'][k] = traj['next_obs'][k][:cutoff]
         assert traj['dones'].sum() == 1
         traj['dones'] = traj['dones'][-cutoff:]
+    print(f"Success rate: {success_count / len(trajs)}")
     with open(SAVEFILE, "wb") as fi:
         pickle.dump(trajs, fi)
     print(SAVEFILE)

@@ -39,6 +39,8 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 parser.add_argument("--use_general_scales", action="store_true", help="Enable per-dimension noise scaling.")
 parser.add_argument("--sys_noise_scale", type=float, default=0, help="Scale of system noise.")
 parser.add_argument("--rand_noise_scale", type=float, default=0, help="Scale of random noise.")
+parser.add_argument("--obs_receptive_noise_scale", type=float, default=0, help="Scale of receptive object in observation noise.")
+parser.add_argument("--obs_insertive_noise_scale", type=float, default=0, help="Scale of insertive object in observation noise.")
 parser.add_argument("--record_path", type=str, default="trajectories_ynnn.pkl", help="Path to save the recorded trajectories.")
 parser.add_argument("--num_trajectories", type=int, default=10, help="Number of trajectories to record.")
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
@@ -75,6 +77,7 @@ from isaaclab.envs import (
     DirectRLEnvCfg,
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
+    ManagerBasedEnv,
 )
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
@@ -92,6 +95,21 @@ def to_numpy(tensor):
     if isinstance(tensor, dict):
         return {k: to_numpy(v) for k, v in tensor.items()}
     return tensor.detach().cpu().numpy()
+
+def get_positions(env: ManagerBasedEnv):
+    asset = env.scene["receptive_object"]
+    positions = asset.data.root_pos_w
+    orientations = asset.data.root_quat_w
+    return torch.cat([positions, orientations], dim=-1)
+
+def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
+    asset = env.scene["receptive_object"]
+    positions = asset.data.root_pos_w
+    orientations = asset.data.root_quat_w
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    positions_orientations = torch.cat([positions, orientations], dim=-1)
+    positions_orientations[env_id] = position
+    asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -163,9 +181,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     else:
         general_noise_scales = np.ones((1, 7), dtype=np.float32)
     general_means = np.array([0.15601279, -0.27718163, -0.09841531, -0.5406071, -0.04196594, -0.01980124, -0.71222633], dtype=np.float32)
-    savefile = args_cli.record_path
-    savefile = savefile[:savefile.rfind('.')] + f"-{use_general_scales}-{sys_noise_scale}-{rand_noise_scale}-{args_cli.num_trajectories}" + savefile[savefile.rfind('.'):]
-    print(f"Savefile to: {savefile}")
+    savedir_base = args_cli.record_path
+    assert savedir_base == "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/"
+    savedir = os.path.join(
+        savedir_base,
+        f"job_jan25-{use_general_scales}-{sys_noise_scale}-{rand_noise_scale}-{args_cli.num_trajectories}--{args_cli.obs_receptive_noise_scale}-{args_cli.obs_insertive_noise_scale}"
+    )
+    os.makedirs(savedir, exist_ok=True)
+    print(f"Savefile to directory: {savedir}")
+    savefile = os.path.join(savedir, "trajectories.pkl")
+
+    #### INFORMATION DICT ####
+    infofile = os.path.join(savedir, "info.pkl")
+    info_stored = {
+        'use_general_scales': use_general_scales,
+        'sys_noise_scale': sys_noise_scale,
+        'rand_noise_scale': rand_noise_scale,
+        'num_trajectories': args_cli.num_trajectories,
+        'obs_receptive_noise_scale': args_cli.obs_receptive_noise_scale,
+        'obs_insertive_noise_scale': args_cli.obs_insertive_noise_scale,
+        'horizon': args_cli.horizon,
+    }
+    with open(infofile, "wb") as fi:
+        pickle.dump(info_stored, fi)
+    #### END INFORMATION DICT ####
 
     dt = env.unwrapped.step_dt
     obs = env.get_observations()
@@ -184,11 +223,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "next_obs": {k: [] for k in obskeys},
             "actions_expert": [],
             "sys_noise": np.random.normal(size=action_shape[1:], scale=sys_noise_scale),
+            "obs_receptive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_receptive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
+            "obs_insertive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_insertive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
             "starting_position": None,
         } 
         for _ in range(env.num_envs)
     ]
     total_recorded = 0
+    
+    starting_set_positions = get_positions(env.env.env)
 
     print(f"[INFO] Recording {args_cli.num_trajectories} trajectories...")
 
@@ -200,9 +243,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         
         with torch.inference_mode():
-            actions = policy(obs)
+            obs_tweaked = obs.clone()
+            receptive_noise = np.stack([current_episodes[i]["obs_receptive_noise"] for i in range(env.num_envs)], axis=0)
+            insertive_noise = np.stack([current_episodes[i]["obs_insertive_noise"] for i in range(env.num_envs)], axis=0)
+            receptive_noise = np.tile(receptive_noise, (1, 5))
+            insertive_noise = np.tile(insertive_noise, (1, 5))
+            obs_tweaked['policy'][:, -30:] += torch.tensor(receptive_noise, dtype=torch.float32, device=args_cli.device)
+            obs_tweaked['policy'][:, -60:-30] += torch.tensor(insertive_noise, dtype=torch.float32, device=args_cli.device)
 
-            actions_expert_np = to_numpy(actions)
+            actions = policy(obs_tweaked)
+
+            actions_expert_np = to_numpy(policy(obs))
             rand_noise = np.random.normal(size=action_shape) * rand_noise_scale
             sys_noise = np.stack([current_episodes[i]["sys_noise"] for i in range(env.num_envs)], axis=0)
             rand_noise += sys_noise
@@ -253,6 +304,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         "actions_expert": np.array(current_episodes[i]["actions_expert"]),
                         "sys_noise": np.array(current_episodes[i]["sys_noise"]),
                         "starting_position": np.array(current_episodes[i]["starting_position"]),
+                        "obs_receptive_noise": np.array(current_episodes[i]["obs_receptive_noise"]),
+                        "obs_insertive_noise": np.array(current_episodes[i]["obs_insertive_noise"]),
+                        "starting_set_positions": starting_set_positions[i].cpu().detach().numpy(),
                     }
                     recorded_trajectories.append(trajectory)
                     pbar.update(1) # Update progress bar
@@ -273,8 +327,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         "next_obs": {k: [] for k in obskeys},
                         "actions_expert": [],
                         "sys_noise": np.random.normal(size=action_shape[1:], scale=sys_noise_scale),
+                        "obs_receptive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_receptive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
+                        "obs_insertive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_insertive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
                         "starting_position": None,
                     }
+                    starting_set_positions[i] = get_positions(env.env.env)[i]
 
             obs = next_obs
 
@@ -282,9 +339,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # sleep_time = dt - (time.time() - start_time)
         # if args_cli.real_time and sleep_time > 0:
         #     time.sleep(sleep_time)
-    
-    action_means = np.concatenate([traj['actions'] for traj in recorded_trajectories], axis=0)
-    print(action_means.mean(axis=0), action_means.std(axis=0))
 
     # --- Save Trajectories ---
     print(f"[INFO] Saving {len(recorded_trajectories)} trajectories to {savefile}")

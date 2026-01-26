@@ -27,7 +27,7 @@ parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
 )
-parser.add_argument("--seed", type=int, default=44, help="Seed used for the environment")
+parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
@@ -105,7 +105,10 @@ def get_positions(env: ManagerBasedEnv):
     asset = env.scene["receptive_object"]
     positions = asset.data.root_pos_w
     orientations = asset.data.root_quat_w
-    return torch.cat([positions, orientations], dim=-1)
+    asset2 = env.scene["insertive_object"]
+    positions2 = asset2.data.root_pos_w
+    orientations2 = asset2.data.root_quat_w
+    return torch.cat([positions, orientations, positions2, orientations2], dim=-1)
 
 def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
     asset = env.scene["receptive_object"]
@@ -115,6 +118,21 @@ def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
     positions_orientations = torch.cat([positions, orientations], dim=-1)
     positions_orientations[env_id] = position
     asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
+
+def set_positions_completely(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    asset = env.scene["receptive_object"]
+    positions = asset.data.root_pos_w
+    orientations = asset.data.root_quat_w
+    positions_orientations = torch.cat([positions, orientations], dim=-1)
+    positions_orientations[env_id] = position[:7]
+    asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
+    asset2 = env.scene["receptive_object"]
+    positions2 = asset2.data.root_pos_w
+    orientations2 = asset2.data.root_quat_w
+    positions_orientations2 = torch.cat([positions2, orientations2], dim=-1)
+    positions_orientations2[env_id] = position[7:]
+    asset2.write_root_pose_to_sim(positions_orientations2, env_ids=env_ids)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -262,11 +280,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     else:
         general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=args_cli.device)
     sys_noises = torch.randn(env.num_envs, A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
-    print(f"Using noise of {correction_model_info['sys_noise_scale']}")
+    print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
+    obs_receptive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
+    print(f"Using obs_receptive_noise of {correction_model_info['obs_receptive_noise_scale']}")
+    obs_insertive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
+    print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
 
     if args_cli.enable_cameras:
         rec_video = np.zeros((env.num_envs, 2, T_DIM, *IMAGE_SIZE, 3), dtype=np.uint8)
-        VIDEO_PATH = "./viz/sysnoise-0.3-fps5/video.mp4"
+        VIDEO_PATH = "./viz/test/video.mp4"
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
         NUM_VIDEOS = 3
         VIDEO_FPS = 5
@@ -285,17 +307,26 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     while count_completed < 1000:
         global_timestep += 1
         with torch.inference_mode():
+            obs_tweaked = obs.clone()
+            # receptive_noise = torch.repeat_interleave(obs_receptive_noise, 5, dim=-1)
+            # insertive_noise = torch.repeat_interleave(obs_insertive_noise, 5, dim=-1)
+            receptive_noise = obs_receptive_noise.repeat(1, 5)
+            insertive_noise = obs_insertive_noise.repeat(1, 5)
+            obs_tweaked['policy'][:, -30:] += receptive_noise
+            obs_tweaked['policy'][:, -60:-30] += insertive_noise
+            base_actions = policy(obs_tweaked)
+            expert_actions = policy(obs)
+
             # find actions
-            base_actions = policy(obs)
             base_actions += sys_noises
-            # need_residuals = curstates > 0
-            # need_residuals_count = need_residuals.sum()
-            # if need_residuals_count > 0:
-            #     contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
-            #     currents = obs['policy2'][need_residuals].clone()
-            #     padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
-            #     residual_actions = correction_model(contexts, currents, padding_mask)
-            #     base_actions[need_residuals, :] += residual_actions * action_multiplier
+            need_residuals = curstates > 0
+            need_residuals_count = need_residuals.sum()
+            if need_residuals_count > 0:
+                contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
+                currents = obs['policy2'][need_residuals].clone()
+                padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
+                residual_actions = correction_model(contexts, currents, padding_mask)
+                base_actions[need_residuals, :] += residual_actions * action_multiplier
             
             # step
             next_obs, reward, dones, info = env.step(base_actions)
@@ -371,10 +402,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         successes[i] = False
                         curstates[i] *= 0
                         sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                        obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
+                        obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
                         starting_positions[i] = get_positions(env.env.env)[i]
                     else:
                         curstates[i] += 1
-                        set_positions(env.env.env, starting_positions[i], i)
+                        set_positions_completely(env.env.env, starting_positions[i], i)
         
         if args_cli.enable_cameras and count_success_first_try_video >= NUM_VIDEOS and count_success_second_try_video >= NUM_VIDEOS and count_failed_video >= NUM_VIDEOS:
             break

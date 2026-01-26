@@ -14,6 +14,14 @@ import argparse
 
 ENABLE_WANDB = True
 
+def model_has_nan_or_inf(model):
+    for name, param in model.named_parameters():
+        if param is None:
+            continue
+        if not torch.isfinite(param).all():
+            print(f"Non-finite values in parameter: {name}")
+            return True
+    return False
 
 # --- Model Definition ---
 
@@ -102,12 +110,13 @@ class IndependentTrajectoryDataset(Dataset):
     def __getitem__(self, idx):
         # Get the context and label from a "choosable" trajectory
         traj = self.choosable_trajs[idx]
-        context = torch.tensor(traj['context'], dtype=torch.float32)
-        label = torch.tensor(traj['label'], dtype=torch.float32)
-        
-        # Sample the "current" state from the global pool (includes unchoosable trajs)
-        random_idx = random.randint(0, len(self.all_currents) - 1)
-        current = torch.tensor(self.all_currents[random_idx], dtype=torch.float32)
+        T = traj['context'].shape[0]
+        assert T > 6, f"{T}"
+        zt = random.randint(6, T - 1)
+        st = random.randint(zt, T - 1)
+        context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
+        current = torch.tensor(traj['current'][st], dtype=torch.float32)
+        label = torch.tensor(traj['label'][st], dtype=torch.float32)
         
         return context, current, label
 
@@ -287,10 +296,25 @@ def main():
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
         'label_dim': LABEL_DIM,
-        'use_noise_scales': eval(os.path.basename(DATASET_PATH)[:-4].split('-')[-4]),
-        'sys_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-3]),
-        'rand_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-2]), # TODO this is bad practice
     }
+    if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
+        with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
+            load_dict = pickle.load(fi)
+        save_dict |= {
+            'use_noise_scales': load_dict['use_general_scales'],
+            'sys_noise_scale': load_dict['sys_noise_scale'],
+            'rand_noise_scale': load_dict['rand_noise_scale'],
+            'obs_insertive_noise_scale': load_dict['obs_insertive_noise_scale'],
+            'obs_receptive_noise_scale': load_dict['obs_receptive_noise_scale'],
+        }
+    else:
+        save_dict |= {
+            'use_noise_scales': True,
+            'sys_noise_scale': 0,
+            'rand_noise_scale': 0,
+            'obs_insertive_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-1]),
+            'obs_receptive_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-2]),
+        }
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
         pickle.dump(save_dict, fi)
@@ -303,8 +327,9 @@ def main():
         processed_data.append({
             'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
             'current': traj['obs']['policy2'],
-            'label': (traj['actions_expert'] - traj['actions']).mean(axis=0) / label_stds,
-            'choosable': not np.any(traj['rewards'] > 0.11),
+            'label': (traj['actions_expert'] - traj['actions']) / label_stds,
+            'choosable': traj['obs']['policy2'].shape[0] > 6,
+            # 'choosable': not np.any(traj['rewards'] > 0.11),
         })
         # CONTEXT_DIM = 3
         # CURRENT_DIM = 2
