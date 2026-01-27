@@ -120,19 +120,10 @@ def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
     asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
 
 def set_positions_completely(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
-    env_ids = torch.arange(env.num_envs, device=env.device)
     asset = env.scene["receptive_object"]
-    positions = asset.data.root_pos_w
-    orientations = asset.data.root_quat_w
-    positions_orientations = torch.cat([positions, orientations], dim=-1)
-    positions_orientations[env_id] = position[:7]
-    asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
-    asset2 = env.scene["receptive_object"]
-    positions2 = asset2.data.root_pos_w
-    orientations2 = asset2.data.root_quat_w
-    positions_orientations2 = torch.cat([positions2, orientations2], dim=-1)
-    positions_orientations2[env_id] = position[7:]
-    asset2.write_root_pose_to_sim(positions_orientations2, env_ids=env_ids)
+    asset.write_root_pose_to_sim(position[:7].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
+    asset2 = env.scene["insertive_object"]
+    asset2.write_root_pose_to_sim(position[7:].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -307,6 +298,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     while count_completed < 1000:
         global_timestep += 1
         with torch.inference_mode():
+            expert_actions = policy(obs)
             obs_tweaked = obs.clone()
             # receptive_noise = torch.repeat_interleave(obs_receptive_noise, 5, dim=-1)
             # insertive_noise = torch.repeat_interleave(obs_insertive_noise, 5, dim=-1)
@@ -315,7 +307,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             obs_tweaked['policy'][:, -30:] += receptive_noise
             obs_tweaked['policy'][:, -60:-30] += insertive_noise
             base_actions = policy(obs_tweaked)
-            expert_actions = policy(obs)
 
             # find actions
             base_actions += sys_noises
