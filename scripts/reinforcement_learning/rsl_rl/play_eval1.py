@@ -62,6 +62,7 @@ import torch
 import imageio
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+import cv2
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -125,6 +126,63 @@ def set_positions_completely(env: ManagerBasedEnv, position: torch.Tensor, env_i
     asset2 = env.scene["insertive_object"]
     asset2.write_root_pose_to_sim(position[7:].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
 
+def render_frame(frame: np.ndarray, caption: str, display_action: np.ndarray = None):
+    captions = caption.splitlines()
+    IMAGE_SIZE = frame.shape[:2]
+
+    if display_action is not None:
+        coord = display_action[:2]
+        # DRAW SECOND SCREEN #
+        SECOND_SCREEN_TOP_MARGIN = 40
+        SECOND_SCREEN_SIZE = (IMAGE_SIZE[0] - SECOND_SCREEN_TOP_MARGIN, IMAGE_SIZE[1])
+        second_screen = np.zeros((*SECOND_SCREEN_SIZE, 3), dtype=np.uint8)
+        h, w = SECOND_SCREEN_SIZE
+        center = (w // 2, h // 2)
+
+        # Draw Axes (White = 255)
+        cv2.line(second_screen, (0, center[1]), (w, center[1]), (255, 255, 255), 1) # X-axis
+        cv2.line(second_screen, (center[0], 0), (center[0], h), (255, 255, 255), 1) # Y-axis
+
+        # Map the -5 to +5 range to pixel coordinates
+        # Scale factor: pixels per unit
+        scale_x = w / 10
+        scale_y = h / 10
+        
+        # Calculate pixel position (Note: Y is inverted in screen space)
+        px = int(center[0] + coord[0] * scale_x)
+        py = int(center[1] - coord[1] * scale_y)
+
+        # Logic: Draw circle if within (-5, 5), else draw ray
+        if abs(coord[0]) < 5 and abs(coord[1]) < 5:
+            cv2.circle(second_screen, (px, py), 5, (0, 255, 0), -1)
+        else:
+            cv2.line(second_screen, center, (px, py), (0, 255, 0), 2)
+        # END DRAW SECOND SCREEN #
+
+        top_margin = np.full((SECOND_SCREEN_TOP_MARGIN, IMAGE_SIZE[1], 3), 255, dtype=np.uint8)
+        frame = np.concatenate([frame, np.concatenate([top_margin, second_screen], axis=0)], axis=1)
+
+    cv2.putText(
+        frame,
+        captions[0],
+        org=(5, 10),
+        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+        fontScale=0.4,
+        color=(0, 0, 0),  # BGR: black
+        thickness=1,
+        lineType=cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        ' '.join(captions[1:]),
+        org=(5, 28),
+        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+        fontScale=0.4,
+        color=(0, 0, 0),  # BGR: black
+        thickness=1,
+        lineType=cv2.LINE_AA,
+    )
+    return frame
 
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
@@ -278,10 +336,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
 
     if args_cli.enable_cameras:
-        rec_video = np.zeros((env.num_envs, 2, T_DIM, *IMAGE_SIZE, 3), dtype=np.uint8)
+        PLOT_RESIDUAL = False
+        rec_video = np.zeros((env.num_envs, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
         VIDEO_PATH = "./viz/test/video.mp4"
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
-        NUM_VIDEOS = 3
+        NUM_VIDEOS = 6
         VIDEO_FPS = 5
         count_success_first_try_video = 0
         count_success_second_try_video = 0
@@ -336,12 +395,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     frames = (frames * 255).astype(np.uint8)
                 
                 for i in range(env.num_envs):
-                    img = Image.fromarray(frames[i])
-                    if frames[i].shape != (*IMAGE_SIZE, 3):
-                        img = img.resize(IMAGE_SIZE, Image.Resampling.LANCZOS)
-                    draw = ImageDraw.Draw(img)
-                    draw.text((5, 5), f"t={timesteps[i]} r={reward[i]:.5f} done={dones[i]}", fill=(0, 0, 0))
-                    rec_video[i, curstates[i], timesteps[i, curstates[i]]] = np.array(img)
+                    assert frames[i].shape == (*IMAGE_SIZE, 3)
+                    display_action = expert_actions[i] - base_actions[i] if PLOT_RESIDUAL else None
+                    caption = f"t={timesteps[i].tolist()} r={reward[i]:.5f} done={dones[i]}"
+                    if PLOT_RESIDUAL:
+                        caption += f" residual-action={display_action}"
+                    caption += f"\nnoise={obs_receptive_noise[i]}"
+                    final_screen = render_frame(frames[i], caption, display_action = display_action)
+                    rec_video[i, curstates[i], timesteps[i, curstates[i]]] = final_screen
             
             timesteps[indices, curstates] += 1
             obs = next_obs
