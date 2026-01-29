@@ -1,51 +1,103 @@
+import os
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+from torch.distributions import Normal
 import numpy as np
 import pickle
 import wandb
 import random
+import argparse
 
 ENABLE_WANDB = True
 
 # --- Model Definition ---
 
-class MarkovianPolicy(nn.Module):
-    """
-    A standard MLP policy for Markovian decision processes.
-    Maps current state (current_dim) -> action (label_dim).
-    """
-    def __init__(self, current_dim, label_dim, hidden_dim=256):
+
+class RegularMLPPolicy(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=256):
         super().__init__()
+
         self.net = nn.Sequential(
-            nn.Linear(current_dim, hidden_dim),
+            nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, label_dim)
+            nn.Linear(hidden_dim, action_dim),
         )
 
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, state):
+        return self.net(state)
+
+    def act(self, state):
+        return self.forward(state)
+    
+    def loss(self, state, action):
+        pred_actions = self.forward(state)
+        return F.mse_loss(pred_actions, action)
+
+
+class GaussianMLPPolicy(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=256, log_std_min=-20, log_std_max=2):
+        super().__init__()
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        
+        self.mu_head = nn.Linear(hidden_dim, action_dim)
+        self.log_std_head = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, state):
+        x = self.net(state)
+        mu = self.mu_head(x)
+        # Clamping log_std for numerical stability
+        log_std = self.log_std_head(x)
+        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
+        return mu, log_std
+
+    def log_prob(self, state, action):
+        """Returns the log probability of an expert action given the state."""
+        mu, log_std = self.forward(state)
+        std = log_std.exp()
+        dist = Normal(mu, std)
+        # Summing log_probs over action dimensions (diagonal Gaussian assumption)
+        return dist.log_prob(action).sum(dim=-1)
+
+    def act(self, state):
+        """Deterministic action (argmax) for inference."""
+        self.eval()
+        with torch.no_grad():
+            mu, _ = self.forward(state)
+        return mu
+    
+    def loss(self, state, action):
+        log_probs = self.log_prob(state, action)
+        return -log_probs.mean()
+
 
 # --- Dataset Wrapper ---
 
 class TrajectoryDataset(Dataset):
     def __init__(self, processed_data):
-        # We flatten all trajectories into a single pool of (state, action) pairs
-        self.states = []
-        self.actions = []
-        for traj in processed_data:
-            self.states.append(traj['current'])
-            self.actions.append(traj['label'])
+        states = [traj['current'] for traj in processed_data]
+        actions = [traj['label'] for traj in processed_data]
         
-        self.states = torch.from_numpy(np.concatenate(self.states, axis=0)).float()
-        self.actions = torch.from_numpy(np.concatenate(self.actions, axis=0)).float()
+        self.states = torch.from_numpy(np.concatenate(states, axis=0)).float()
+        self.actions = torch.from_numpy(np.concatenate(actions, axis=0)).float()
 
     def __len__(self):
         return self.states.shape[0]
@@ -55,122 +107,195 @@ class TrajectoryDataset(Dataset):
 
 # --- Training and Eval Functions ---
 
-def train_behavior_cloning(model, train_loader, val_loader, epochs=100, lr=1e-4, device='cuda'):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = nn.MSELoss()
+def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=3e-4, batch_size=64, device="cuda", save_path="checkpoints"):
+    train_loader = DataLoader(
+        TrajectoryDataset(train_data), 
+        batch_size=batch_size, shuffle=True, num_workers=4,
+    )
+    val_loader = DataLoader(
+        TrajectoryDataset(val_data), 
+        batch_size=batch_size, shuffle=False, num_workers=4,
+    )
+
+    os.makedirs(save_path, exist_ok=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
     for epoch in range(epochs):
         model.train()
-        epoch_loss = 0
+        train_loss = 0
         
-        for states, actions in train_loader:
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
+        for states, actions in pbar:
             states, actions = states.to(device), actions.to(device)
             
             optimizer.zero_grad()
-            preds = model(states)
-            loss = criterion(preds, actions)
+
+            loss = model.loss(states, actions)
+            
             loss.backward()
-            
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            
-            epoch_loss += loss.item()
-        
+            train_loss += min(loss.item(), 100)
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+
         # Validation
         model.eval()
         val_loss = 0
         with torch.no_grad():
             for states, actions in val_loader:
                 states, actions = states.to(device), actions.to(device)
-                preds = model(states)
-                val_loss += criterion(preds, actions).item()
-        
-        avg_train = epoch_loss / len(train_loader)
-        avg_val = val_loss / len(val_loader)
-        scheduler.step()
+                val_loss += min(model.loss(states, actions).item(), 100)
 
-        print(f"Epoch {epoch+1:03d} | Train MSE: {avg_train:.6f} | Val MSE: {avg_val:.6f}")
+        avg_train_loss = train_loss / len(train_loader)
+        avg_val_loss = val_loss / len(val_loader)
+
+        print(f"Summary - Train: {avg_train_loss:.6f} | Val: {avg_val_loss:.6f}")
+
         if ENABLE_WANDB:
-            wandb.log({"train_mse": avg_train, "val_mse": avg_val, "lr": scheduler.get_last_lr()[0]})
+            wandb.log({
+                "epoch": epoch,
+                "train_loss": avg_train_loss,
+                "val_loss": avg_val_loss,
+                "lr": optimizer.param_groups[0]['lr']
+            })
 
-        if epoch % 50 == 49:
-            torch.save(model.state_dict(), f"models/markovian_policy_3_s{epoch + 1}.pth")
+        # Checkpoint every 10 epochs
+        if epoch % 50 == 0 or epoch == epochs - 1:
+            csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
+            torch.save(model.state_dict(), csp)
+            print(f"Model at epoch {epoch} saved to {csp}")
+
+def load_robot_policy(save_path, device="cpu"):
+    with open(os.path.join(os.path.dirname(save_path), "info.pkl"), "rb") as fi:
+        save_dict = pickle.load(fi)
+    
+    if save_dict['use_gaussian']:
+        model = GaussianMLPPolicy(save_dict['current_dim'], save_dict['label_dim'], save_dict['d_model'])
+    else:
+        model = RegularMLPPolicy(save_dict['current_dim'], save_dict['label_dim'], save_dict['d_model'])
+    
+    model.load_state_dict(torch.load(save_path, map_location=device))
+    model.to(device)
+    model.eval()
+    return model, save_dict
 
 # --- Main ---
 
 def main():
-    # Params
-    LR = 3e-4 # Slightly higher for MLP
-    EPOCHS = 300
-    BATCH_SIZE = 256
+    parser = argparse.ArgumentParser(description="Train Robot Transformer Policy")
+    
+    # Adding parameters
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--action_low", type=float, default=-0.999, help="Minimum action value")
+    parser.add_argument("--action_high", type=float, default=0.999, help="Maximum action value")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--d_model", type=int, default=256, help="Transformer & MLP hidden dimension")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers")
+    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
+    parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
+    parser.add_argument("--dataset_path", type=str, default="N/A", help="Path to load the dataset")
+    parser.add_argument("--use_gaussian", action="store_true", default=False, help="Use Gaussian policy.")
+    
+    args = parser.parse_args()
+
+    # Accessing the parameters
+    LR = args.lr
+    EPOCHS = args.epochs
+    ACTION_LOW = args.action_low
+    ACTION_HIGH = args.action_high
+    BATCH_SIZE = args.batch_size
+
+    GAUSSIAN = args.use_gaussian
+    D_MODEL = args.d_model
+    NUM_LAYERS = args.num_layers
+    DROPOUT = args.dropout
+
+    save_path = args.save_path
+    
+    CONTEXT_DIM = 45 + 7
     CURRENT_DIM = 45 * 5
     LABEL_DIM = 7
-    HIDDEN_DIM = 512 * 2
-    ACTION_LOW = -0.999
-    ACTION_HIGH = 0.999
 
     if ENABLE_WANDB:
-        wandb.init(
-            project="robot-markov-bc",
-            config={"lr": LR, "epochs": EPOCHS, "batch_size": BATCH_SIZE},
-            name="255-to-7 5layer x1024"
-        )
+        wandb.init(project="robot-mlp-bc", config=vars(args))
+    
+    DATASET_PATH = args.dataset_path
 
-    # Data Loading
     trajs = []
     try:
-        with open("cut-trajectories_ynnn-True-0.0-0.0-10000.pkl", "rb") as fi:
+        with open(DATASET_PATH, "rb") as fi:
             trajs += pickle.load(fi)
     except FileNotFoundError:
         print("Data file not found.")
         return
+    print("Loaded dataset.")
     
-    # Action Normalization (Scaling logic preserved)
-    action_means = np.concatenate([traj['actions'] for traj in trajs], axis=0)
-    action_high = np.array([8.54, 7.43, 6.33, 16.72, 30.75, 8.65, 15.46], dtype=np.float32)
-    action_low = np.array([-7.84, -10.23, -7.54, -25.27, -35.54, -6.72, -16.17], dtype=np.float32)
-    print(f"Action high = {action_high.tolist()}")
-    print(f"Action low = {action_low.tolist()}")
-    assert np.all(np.quantile(action_means, 0.8, axis=0) < action_high) and np.all(np.quantile(action_means, 0.2, axis=0) > action_low)
+    
+    all_labels = np.concatenate([traj['actions_expert'] for traj in trajs], axis=0)
+    label_means = all_labels.mean(axis=0)
+    label_stds = all_labels.std(axis=0)
+    print(f"Label means = {label_means.tolist()}")
+    print(f"Label stds = {label_stds.tolist()}")
+
+    save_dict = {
+        'dataset_origin': os.path.abspath(DATASET_PATH),
+        'label_stds': label_stds.tolist(),
+        'context_dim': CONTEXT_DIM,
+        'current_dim': CURRENT_DIM,
+        'label_dim': LABEL_DIM,
+        'use_gaussian': GAUSSIAN,
+        'd_model': D_MODEL,
+    }
+    if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
+        with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
+            load_dict = pickle.load(fi)
+        save_dict |= {
+            'use_noise_scales': load_dict['use_general_scales'],
+            'sys_noise_scale': load_dict['sys_noise_scale'],
+            'rand_noise_scale': load_dict['rand_noise_scale'],
+            'obs_insertive_noise_scale': load_dict['obs_insertive_noise_scale'],
+            'obs_receptive_noise_scale': load_dict['obs_receptive_noise_scale'],
+        }
+    else:
+        save_dict |= {
+            'use_noise_scales': True,
+            'sys_noise_scale': 0,
+            'rand_noise_scale': 0,
+            'obs_insertive_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-1]),
+            'obs_receptive_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-2]),
+        }
+    os.makedirs(save_path, exist_ok=True)
+    with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
+        pickle.dump(save_dict, fi)
 
     processed_data = []
     for traj in trajs:
-        # Scale actions to [ACTION_LOW, ACTION_HIGH]
-        norm_actions = np.clip(
-            (traj['actions'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, 
-            ACTION_LOW, ACTION_HIGH
-        )
+        if traj['rewards'].ndim == 1:
+            traj['rewards'] = traj['rewards'][:, None]
+        
         processed_data.append({
             'current': traj['obs']['policy'],
-            'label': norm_actions,
+            'label': (traj['actions_expert'] - traj['actions']) / label_stds,
         })
-    
-    # Check for NaNs
-    for i, traj in enumerate(processed_data):
-        if np.isnan(traj['current']).any() or np.isnan(traj['label']).any():
-            print(f"NaN found in trajectory {i}")
-        if np.isinf(traj['current']).any() or np.isinf(traj['label']).any():
-            print(f"Inf found in trajectory {i}")
+    assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
+    assert processed_data[0]['label'].shape[-1] == LABEL_DIM
 
-    # Train/Val Split
     random.shuffle(processed_data)
     split = int(len(processed_data) * 0.8)
-    
-    train_set = TrajectoryDataset(processed_data[:split])
-    val_set = TrajectoryDataset(processed_data[split:])
-    
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
+    train_data = processed_data[:split]
+    val_data = processed_data[split:]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = MarkovianPolicy(CURRENT_DIM, LABEL_DIM, hidden_dim=HIDDEN_DIM)
+    if GAUSSIAN:
+        model = GaussianMLPPolicy(CURRENT_DIM, LABEL_DIM, D_MODEL)
+    else:
+        model = RegularMLPPolicy(CURRENT_DIM, LABEL_DIM, D_MODEL)
     model.to(device)
     if ENABLE_WANDB:
         wandb.watch(model)
 
     try:
-        train_behavior_cloning(model, train_loader, val_loader, epochs=EPOCHS, lr=LR, device=device)
+        train_behavior_cloning(model, train_data, val_data, epochs=EPOCHS, lr=LR, batch_size=BATCH_SIZE, device=device, save_path=save_path)
     finally:
         if ENABLE_WANDB:
             wandb.finish()
