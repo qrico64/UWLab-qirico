@@ -196,7 +196,6 @@ def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=1e-4, bat
         print(f"Summary - Train: {avg_train_loss:.6f} | Val: {avg_val_loss:.6f}")
         
         if ENABLE_WANDB:
-            import wandb
             wandb.log({
                 "epoch": epoch,
                 "train_loss": avg_train_loss,
@@ -279,19 +278,9 @@ def main():
     label_stds = all_labels.std(axis=0)
     print(f"Label means = {label_means.tolist()}")
     print(f"Label stds = {label_stds.tolist()}")
-    # action_high = [8.54, 7.43, 6.33, 16.72, 30.75, 8.65, 15.46]
-    # action_low = [-7.84, -10.23, -7.54, -25.27, -35.54, -6.72, -16.17]
-    # print(f"Action high = {action_high}")
-    # print(f"Action low = {action_low}")
-    # action_high = np.array(action_high, dtype=np.float32)
-    # action_low = np.array(action_low, dtype=np.float32)
-    # assert np.all(np.quantile(action_means, 0.8, axis=0) < action_high) and np.all(np.quantile(action_means, 0.2, axis=0) > action_low)
-    # for traj in trajs:
-    #     traj['actions'] = np.clip((traj['actions'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, ACTION_LOW, ACTION_HIGH)
-    #     traj['actions_expert'] = np.clip((traj['actions_expert'] - action_low) / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW) + ACTION_LOW, ACTION_LOW, ACTION_HIGH)
-    #     traj['sys_noise'] = traj['sys_noise'] / (action_high - action_low) * (ACTION_HIGH - ACTION_LOW)
 
     save_dict = {
+        'dataset_origin': os.path.abspath(DATASET_PATH),
         'label_stds': label_stds.tolist(),
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
@@ -331,16 +320,6 @@ def main():
             'choosable': traj['obs']['policy2'].shape[0] > 6,
             # 'choosable': not np.any(traj['rewards'] > 0.11),
         })
-        # CONTEXT_DIM = 3
-        # CURRENT_DIM = 2
-        # LABEL_DIM = 3
-        # n = np.random.randint(15, 160)
-        # debug_context = np.random.randn(n, CONTEXT_DIM)
-        # processed_data.append({
-        #     'context': debug_context,
-        #     'current': np.random.randn(n, CURRENT_DIM),
-        #     'label': debug_context.mean(axis=0)[:LABEL_DIM]
-        # })
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
     assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
     assert processed_data[0]['label'].shape[-1] == LABEL_DIM

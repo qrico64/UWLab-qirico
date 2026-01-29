@@ -184,10 +184,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         general_noise_scales = np.ones((1, 7), dtype=np.float32)
     general_means = np.array([0.15601279, -0.27718163, -0.09841531, -0.5406071, -0.04196594, -0.01980124, -0.71222633], dtype=np.float32)
     savedir_base = args_cli.record_path
-    assert savedir_base == "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/"
     savedir = os.path.join(
         savedir_base,
-        f"job_jan25-{use_general_scales}-{sys_noise_scale}-{rand_noise_scale}-{args_cli.num_trajectories}--{args_cli.obs_receptive_noise_scale}-{args_cli.obs_insertive_noise_scale}"
+        f"job-{use_general_scales}-{sys_noise_scale}-{rand_noise_scale}-{args_cli.num_trajectories}--{args_cli.obs_receptive_noise_scale}-{args_cli.obs_insertive_noise_scale}"
     )
     os.makedirs(savedir, exist_ok=True)
     print(f"Savefile to directory: {savedir}")
