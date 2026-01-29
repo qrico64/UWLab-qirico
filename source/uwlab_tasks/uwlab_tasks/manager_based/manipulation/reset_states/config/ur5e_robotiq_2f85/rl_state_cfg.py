@@ -421,6 +421,40 @@ class ObservationsCfg:
             self.history_length = 1
 
     @configclass
+    class PolicyCfg_AAAAAA(ObsGroup):
+        insertive_asset_pose = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("insertive_object"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names="robotiq_base_link"),
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        receptive_asset_pose = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("receptive_object"),
+                "root_asset_cfg": SceneEntityCfg("robot", body_names="robotiq_base_link"),
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        insertive_asset_in_receptive_asset_frame: ObsTerm = ObsTerm(
+            func=task_mdp.target_asset_pose_in_root_asset_frame,
+            params={
+                "target_asset_cfg": SceneEntityCfg("insertive_object"),
+                "root_asset_cfg": SceneEntityCfg("receptive_object"),
+                "rotation_repr": "axis_angle",
+            },
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = False
+            self.history_length = 5
+
+    @configclass
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
@@ -539,6 +573,7 @@ class ObservationsCfg:
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     policy2: PolicyCfg2 = PolicyCfg2()
+    policy_aaaaaa: PolicyCfg_AAAAAA = PolicyCfg_AAAAAA()
     # rgb: RGBCfg = RGBCfg()
 
 

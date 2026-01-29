@@ -89,6 +89,8 @@ import isaaclab_tasks  # noqa: F401
 import uwlab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from uwlab_tasks.utils.hydra import hydra_task_config
+import cur_utils
+
 
 def to_numpy(tensor):
     """Helper to convert torch tensors (including dicts) to numpy."""
@@ -209,11 +211,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dt = env.unwrapped.step_dt
     obs = env.get_observations()
 
+    if args_cli.obs_receptive_noise_scale != 0 or args_cli.obs_insertive_noise_scale != 0:
+        assert 'policy_aaaaaa' in obs.keys()
+    if args_cli.obs_insertive_noise_scale != 0:
+        raise Exception("Right now doesn't support insertive noise!!")
+
     # --- Recording Setup ---
     recorded_trajectories = []
     # Temp storage for currently running episodes across all envs
     # Each env index has its own dictionary of lists
-    obskeys = list(obs.keys() - {'rgb'})
+    obskeys = list(obs.keys() - {'rgb', 'policy_aaaaaa'})
     current_episodes = [
         {
             "obs": {k: [] for k in obskeys},
@@ -243,17 +250,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         
         with torch.inference_mode():
+            actions_expert = policy(obs)
+            actions_expert_np = to_numpy(actions_expert)
+
             obs_tweaked = obs.clone()
             receptive_noise = np.stack([current_episodes[i]["obs_receptive_noise"] for i in range(env.num_envs)], axis=0)
             insertive_noise = np.stack([current_episodes[i]["obs_insertive_noise"] for i in range(env.num_envs)], axis=0)
-            receptive_noise = np.tile(receptive_noise, (1, 5))
-            insertive_noise = np.tile(insertive_noise, (1, 5))
-            obs_tweaked['policy'][:, -30:] += torch.tensor(receptive_noise, dtype=torch.float32, device=args_cli.device)
-            obs_tweaked['policy'][:, -60:-30] += torch.tensor(insertive_noise, dtype=torch.float32, device=args_cli.device)
+            receptive_noise = torch.tensor(receptive_noise, dtype=torch.float32, device=args_cli.device)
+            insertive_noise = torch.tensor(insertive_noise, dtype=torch.float32, device=args_cli.device)
+            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(env.num_envs, 5, 6) + receptive_noise.unsqueeze(1)
+            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(env.num_envs, 5, 6) + insertive_noise.unsqueeze(1)
+            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(env.num_envs, 30)
+            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(env.num_envs, 30)
 
             actions = policy(obs_tweaked)
 
-            actions_expert_np = to_numpy(policy(obs))
             rand_noise = np.random.normal(size=action_shape) * rand_noise_scale
             sys_noise = np.stack([current_episodes[i]["sys_noise"] for i in range(env.num_envs)], axis=0)
             rand_noise += sys_noise

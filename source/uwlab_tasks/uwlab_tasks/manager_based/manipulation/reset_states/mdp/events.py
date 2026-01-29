@@ -1085,7 +1085,7 @@ class MultiResetManager(ManagerTermBase):
             dataset = torch.load(local_file_path)
             all_root_poses = torch.stack(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'], dim=0)
             all_root_poses = all_root_poses[(all_root_poses[:, 0] > 0.3) & (all_root_poses[:, 0] < 0.55) & (all_root_poses[:, 1] > -0.1) & (all_root_poses[:, 1] < 0.5)]
-            save_point_distribution_image(all_root_poses, "processed_dist.png")
+            save_point_distribution_image(all_root_poses, "viz/processed_dist.png")
             
             # init_indices = all_root_poses[:, 0] < 0.425
             # init_indices = (all_root_poses[:, 2] > 0.0014) & (all_root_poses[:, 2] < 0.0016)

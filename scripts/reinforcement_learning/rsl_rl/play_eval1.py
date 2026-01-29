@@ -36,6 +36,7 @@ parser.add_argument(
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
 parser.add_argument("--correction_model", type=str, default="N/A", help="Residual model .pt file.")
+parser.add_argument("--plot_residual", action="store_true", default=False, help="Open second screen & plot residual.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -88,6 +89,7 @@ import uwlab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from uwlab_tasks.utils.hydra import hydra_task_config
 from train2 import RobotTransformerPolicy, load_robot_policy
+import cur_utils
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -322,7 +324,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     rec_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
     rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
     curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
+    
     obs = env.get_observations()
+
+    if correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0:
+        assert 'policy_aaaaaa' in obs.keys()
+    if correction_model_info['obs_insertive_noise_scale'] != 0:
+        raise Exception("Right now doesn't support insertive noise!!")
 
     if correction_model_info['use_noise_scales']:
         general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=args_cli.device) / 5
@@ -336,7 +344,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
 
     if args_cli.enable_cameras:
-        PLOT_RESIDUAL = False
+        PLOT_RESIDUAL = args_cli.plot_residual
         rec_video = np.zeros((env.num_envs, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
         VIDEO_PATH = "./viz/test/video.mp4"
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
@@ -358,17 +366,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         global_timestep += 1
         with torch.inference_mode():
             expert_actions = policy(obs)
+
             obs_tweaked = obs.clone()
-            # receptive_noise = torch.repeat_interleave(obs_receptive_noise, 5, dim=-1)
-            # insertive_noise = torch.repeat_interleave(obs_insertive_noise, 5, dim=-1)
-            receptive_noise = obs_receptive_noise.repeat(1, 5)
-            insertive_noise = obs_insertive_noise.repeat(1, 5)
-            obs_tweaked['policy'][:, -30:] += receptive_noise
-            obs_tweaked['policy'][:, -60:-30] += insertive_noise
+            receptive_noise = obs_receptive_noise
+            insertive_noise = obs_insertive_noise
+            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(env.num_envs, 5, 6) + receptive_noise.unsqueeze(1)
+            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(env.num_envs, 5, 6) + insertive_noise.unsqueeze(1)
+            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(env.num_envs, 30)
+            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(env.num_envs, 30)
+
             base_actions = policy(obs_tweaked)
 
-            # find actions
             base_actions += sys_noises
+
             need_residuals = curstates > 0
             need_residuals_count = need_residuals.sum()
             if need_residuals_count > 0:
