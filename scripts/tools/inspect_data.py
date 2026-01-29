@@ -120,8 +120,8 @@ def plot_actions_tsne(actions, n_components=2, filename="tsne_plot.png"):
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/job-True-0.0-0.0-60000--0.0-0.05/cut-trajectories_jan22-True-0.0-0.0-60000--0.0-0.05.pkl"
-    VIZ_DIR = f"viz/{os.path.basename(FILENAME)[:-4]}/"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/job-True-0.0-0.0-60000-60--0.01-0.0/cut-trajectories.pkl"
+    VIZ_DIR = f"viz/jan29/{os.path.basename(FILENAME)[:-4]}/"
     os.makedirs(VIZ_DIR, exist_ok=True)
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
@@ -133,6 +133,9 @@ def main():
     rewards = np.maximum(rewards, np.quantile(rewards, 0.01))
     save_histogram(rewards, VIZ_DIR + "rewards.png", bins=100)
     actions = np.concatenate([traj['actions'] for traj in trajs], axis=0)
+    action_magnitudes = np.linalg.norm(actions, axis=1)
+    save_histogram(action_magnitudes, VIZ_DIR + "action_magnitudes.png", bins=100)
+
     action_low = []
     action_high = []
     expert_actions = np.concatenate([traj['actions_expert'] for traj in trajs], axis=0)

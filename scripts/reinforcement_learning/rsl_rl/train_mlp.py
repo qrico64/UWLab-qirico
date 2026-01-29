@@ -10,8 +10,9 @@ import pickle
 import wandb
 import random
 import argparse
+from diffusers import DDPMScheduler, UNet1DModel
 
-ENABLE_WANDB = True
+ENABLE_WANDB = False
 
 # --- Model Definition ---
 
@@ -87,6 +88,98 @@ class GaussianMLPPolicy(nn.Module):
     def loss(self, state, action):
         log_probs = self.log_prob(state, action)
         return -log_probs.mean()
+
+
+class DiffusionPolicy(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=256, num_train_timesteps=100):
+        super().__init__()
+        
+        # 1. The Noise Scheduler
+        self.noise_scheduler = DDPMScheduler(
+            num_train_timesteps=num_train_timesteps,
+            beta_schedule='squaredcos_cap_v2',
+            clip_sample=True,
+            prediction_type='epsilon'
+        )
+
+        # 2. The Conditional Network (U-Net)
+        # Note: Diffusion Policy often uses a 1D UNet to handle action sequences.
+        # For a simple (state -> action) mapping, we configure it for a sequence length of 1.
+        self.model = UNet1DModel(
+            in_channels=action_dim,
+            out_channels=action_dim,
+            extra_compute_res_blocks=True,
+            sample_size=1, # Length of action sequence (1 for immediate action)
+            global_cond_channels=state_dim,
+            block_out_channels=(hidden_dim, hidden_dim * 2, hidden_dim * 4),
+        )
+        
+        self.action_dim = action_dim
+        self.num_timesteps = num_train_timesteps
+
+    def forward(self, state, action_noisy, timesteps):
+        # UNet1D expects (batch, channels, seq_len)
+        # We add a dummy dimension for seq_len=1
+        action_noisy = action_noisy.unsqueeze(-1) 
+        
+        # Predict the noise
+        noise_pred = self.model(
+            sample=action_noisy, 
+            timestep=timesteps, 
+            global_cond=state
+        ).sample
+        
+        return noise_pred.squeeze(-1)
+
+    def loss(self, state, action):
+        batch_size = state.shape[0]
+        device = state.device
+
+        # Sample noise to add to the actions
+        noise = torch.randn(action.shape, device=device)
+        
+        # Sample a random timestep for each image
+        timesteps = torch.randint(
+            0, self.noise_scheduler.config.num_train_timesteps, 
+            (batch_size,), device=device
+        ).long()
+
+        # Add noise to the clean actions (forward diffusion process)
+        noisy_actions = self.noise_scheduler.add_noise(action, noise, timesteps)
+        
+        # Predict the noise (reverse process)
+        noise_pred = self.forward(state, noisy_actions, timesteps)
+        
+        return F.mse_loss(noise_pred, noise)
+
+    def act(self, state):
+        """Inference using the reverse diffusion process."""
+        self.eval()
+        device = state.device
+        batch_size = state.shape[0]
+
+        # Start from pure Gaussian noise
+        action = torch.randn((batch_size, self.action_dim), device=device)
+        
+        self.noise_scheduler.set_timesteps(self.num_timesteps)
+
+        with torch.no_grad():
+            for k in self.noise_scheduler.timesteps:
+                # Predict noise
+                noise_pred = self.forward(
+                    state, 
+                    action, 
+                    torch.tensor([k], device=device)
+                )
+
+                # Compute previous sample (denoise)
+                action = self.noise_scheduler.step(
+                    model_output=noise_pred,
+                    timestep=k,
+                    sample=action
+                ).prev_sample
+                
+        return action
 
 
 # --- Dataset Wrapper ---
@@ -194,7 +287,7 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
     parser.add_argument("--dataset_path", type=str, default="N/A", help="Path to load the dataset")
-    parser.add_argument("--use_gaussian", action="store_true", default=False, help="Use Gaussian policy.")
+    parser.add_argument("--model_type", type=str, default="Gaussian", help="Deterministic or Gaussian or Diffusion")
     
     args = parser.parse_args()
 
@@ -205,7 +298,7 @@ def main():
     ACTION_HIGH = args.action_high
     BATCH_SIZE = args.batch_size
 
-    GAUSSIAN = args.use_gaussian
+    MODEL_TYPE: str = args.model_type.lower()
     D_MODEL = args.d_model
     NUM_LAYERS = args.num_layers
     DROPOUT = args.dropout
@@ -243,7 +336,7 @@ def main():
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
         'label_dim': LABEL_DIM,
-        'use_gaussian': GAUSSIAN,
+        'model_type': MODEL_TYPE,
         'd_model': D_MODEL,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
@@ -286,10 +379,14 @@ def main():
     val_data = processed_data[split:]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if GAUSSIAN:
+    if MODEL_TYPE == "gaussian":
         model = GaussianMLPPolicy(CURRENT_DIM, LABEL_DIM, D_MODEL)
-    else:
+    elif MODEL_TYPE == "deterministic":
         model = RegularMLPPolicy(CURRENT_DIM, LABEL_DIM, D_MODEL)
+    elif MODEL_TYPE == "diffusion":
+        model = DiffusionPolicy(CURRENT_DIM, LABEL_DIM, D_MODEL)
+    else:
+        raise NotImplementedError(MODEL_TYPE)
     model.to(device)
     if ENABLE_WANDB:
         wandb.watch(model)
