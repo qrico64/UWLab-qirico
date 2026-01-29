@@ -186,7 +186,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     savedir_base = args_cli.record_path
     savedir = os.path.join(
         savedir_base,
-        f"job-{use_general_scales}-{sys_noise_scale}-{rand_noise_scale}-{args_cli.num_trajectories}--{args_cli.obs_receptive_noise_scale}-{args_cli.obs_insertive_noise_scale}"
+        f"job-{use_general_scales}-{sys_noise_scale}-{rand_noise_scale}-{args_cli.num_trajectories}-{args_cli.horizon}--{args_cli.obs_receptive_noise_scale}-{args_cli.obs_insertive_noise_scale}"
     )
     os.makedirs(savedir, exist_ok=True)
     print(f"Savefile to directory: {savedir}")
