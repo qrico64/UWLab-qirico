@@ -322,6 +322,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
     action_multiplier = torch.tensor(correction_model_info["label_stds"], dtype=torch.float32, device=args_cli.device)
+    current_means = torch.tensor(correction_model_info["current_means"], dtype=torch.float32, device=args_cli.device)
+    current_stds = torch.tensor(correction_model_info["current_stds"], dtype=torch.float32, device=args_cli.device)
+    context_means = torch.tensor(correction_model_info["context_means"], dtype=torch.float32, device=args_cli.device)
+    context_stds = torch.tensor(correction_model_info["context_stds"], dtype=torch.float32, device=args_cli.device)
+    
     assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
     assert correction_model_info['label_dim'] == A_DIM
@@ -395,6 +400,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
                 currents = obs['policy2'][need_residuals].clone()
                 padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
+                contexts = (contexts - context_means) / context_stds
+                currents = (currents - current_means) / current_stds
                 residual_actions = correction_model(contexts, currents, padding_mask)
                 base_actions[need_residuals, :] += residual_actions * action_multiplier
             

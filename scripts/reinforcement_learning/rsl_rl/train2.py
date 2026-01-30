@@ -277,6 +277,12 @@ def train_behavior_cloning(
 def load_robot_policy(save_path, device="cpu"):
     with open(os.path.join(os.path.dirname(save_path), "info.pkl"), "rb") as fi:
         save_dict = pickle.load(fi)
+    save_dict = {
+        'current_means': np.zeros((save_dict['current_dim'],)),
+        'current_stds': np.ones((save_dict['current_dim'],)),
+        'context_means': np.zeros((save_dict['context_dim'],)),
+        'context_stds': np.ones((save_dict['context_dim'],)),
+    } | save_dict
     model = RobotTransformerPolicy(
         save_dict['context_dim'],
         save_dict['current_dim'],
@@ -350,9 +356,41 @@ def main():
     print(f"Label means = {label_means.tolist()}")
     print(f"Label stds = {label_stds.tolist()}")
 
+    processed_data = []
+    for traj in trajs:
+        if traj['rewards'].ndim == 1:
+            traj['rewards'] = traj['rewards'][:, None]
+        
+        processed_data.append({
+            'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
+            'current': traj['obs']['policy2'],
+            'label': (traj['actions_expert'] - traj['actions']) / label_stds,
+            'choosable': traj['obs']['policy2'].shape[0] > 6,
+            'obs_receptive_noise': traj['obs_receptive_noise'],
+            # 'choosable': not np.any(traj['rewards'] > 0.11),
+        })
+    assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
+    assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
+    assert processed_data[0]['label'].shape[-1] == LABEL_DIM
+
+    # Current normalization
+    all_currents = np.concatenate([traj['current'] for traj in processed_data], axis=0)
+    current_means = all_currents.mean(axis=0)
+    current_stds = all_currents.std(axis=0)
+    all_contexts = np.concatenate([traj['context'] for traj in processed_data], axis=0)
+    context_means = all_contexts.mean(axis=0)
+    context_stds = all_contexts.std(axis=0)
+    for traj in processed_data:
+        traj['current'] = (traj['current'] - current_means) / current_stds
+        traj['context'] = (traj['context'] - context_means) / context_stds
+
     save_dict = {
         'dataset_origin': os.path.abspath(DATASET_PATH),
         'label_stds': label_stds.tolist(),
+        'current_means': current_means,
+        'current_stds': current_stds,
+        'context_means': context_means,
+        'context_stds': context_stds,
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
         'label_dim': LABEL_DIM,
@@ -384,23 +422,6 @@ def main():
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
         pickle.dump(save_dict, fi)
-
-    processed_data = []
-    for traj in trajs:
-        if traj['rewards'].ndim == 1:
-            traj['rewards'] = traj['rewards'][:, None]
-        
-        processed_data.append({
-            'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
-            'current': traj['obs']['policy2'],
-            'label': (traj['actions_expert'] - traj['actions']) / label_stds,
-            'choosable': traj['obs']['policy2'].shape[0] > 6,
-            'obs_receptive_noise': traj['obs_receptive_noise'],
-            # 'choosable': not np.any(traj['rewards'] > 0.11),
-        })
-    assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
-    assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
-    assert processed_data[0]['label'].shape[-1] == LABEL_DIM
 
     num_choosable = sum(1 for d in processed_data if d['choosable'])
     print(f"Total Trajectories: {len(processed_data)}")
