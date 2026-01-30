@@ -41,7 +41,7 @@ class PositionalEncoding(nn.Module):
         return x
 
 class RobotTransformerPolicy(nn.Module):
-    def __init__(self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=256, dropout=0.1):
+    def __init__(self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=512, dropout=0.1):
         super().__init__()
         self.context_proj = nn.Linear(context_dim, d_model)
         self.ctx_norm = nn.LayerNorm(d_model)
@@ -55,6 +55,8 @@ class RobotTransformerPolicy(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
         self.head = nn.Sequential(
+            nn.Linear(d_model * 2, d_model * 2),
+            nn.ReLU(),
             nn.Linear(d_model * 2, d_model),
             nn.ReLU(),
             nn.Linear(d_model, label_dim)
@@ -83,17 +85,16 @@ class RobotTransformerPolicy(nn.Module):
         return self.head(combined)
 
 class IndependentTrajectoryDataset(Dataset):
-    def __init__(self, data):
+    def __init__(
+            self,
+            data,
+            train_mode,
+            closest_neighbors_radius: float = 0,
+        ):
         """
         data: List of dicts containing 'context', 'current', 'label', and 'choosable'
         """
         self.data = data
-        
-        # 1. Filter trajectories that can be used for Context & Labels
-        self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
-        
-        if len(self.choosable_trajs) == 0:
-            raise ValueError("No trajectories marked as 'choosable' found in the dataset.")
 
         # 2. Flatten all states from ALL trajectories for 'current' sampling
         self.all_currents = []
@@ -103,6 +104,29 @@ class IndependentTrajectoryDataset(Dataset):
         
         self.all_currents = np.concatenate(self.all_currents, axis=0)
 
+        self.train_mode = train_mode
+        if train_mode == "closest-neighbors":
+            assert closest_neighbors_radius > 0
+            self.choosable_trajs = []
+            self.closest_neighbors_radius = closest_neighbors_radius
+            self.all_receptive_noises = np.stack([traj['obs_receptive_noise'] for traj in data], axis=0)
+            self.valid_seconds = []
+            for i, traj in tqdm(enumerate(data)):
+                if not traj.get('choosable', False):
+                    continue
+                cur_distances = np.linalg.norm(self.all_receptive_noises - traj['obs_receptive_noise'], axis=-1)
+                if (((cur_distances <= closest_neighbors_radius) & (cur_distances > 0)).sum() == 0):
+                    continue
+                cur_seconds = np.where((cur_distances <= closest_neighbors_radius) & (cur_distances > 0))[0]
+                self.choosable_trajs.append(traj)
+                self.valid_seconds.append(cur_seconds)
+                if i < 10:
+                    print(self.valid_seconds[-1].shape)
+        elif train_mode == "single-traj":
+            self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
+        else:
+            raise NotImplementedError(train_mode)
+
     def __len__(self):
         # The epoch length is defined by how many choosable demonstration sequences we have
         return len(self.choosable_trajs)
@@ -110,13 +134,21 @@ class IndependentTrajectoryDataset(Dataset):
     def __getitem__(self, idx):
         # Get the context and label from a "choosable" trajectory
         traj = self.choosable_trajs[idx]
-        T = traj['context'].shape[0]
-        assert T > 6, f"{T}"
-        zt = random.randint(6, T - 1)
-        st = random.randint(zt, T - 1)
-        context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
-        current = torch.tensor(traj['current'][st], dtype=torch.float32)
-        label = torch.tensor(traj['label'][st], dtype=torch.float32)
+
+        if self.train_mode == "closest-neighbors":
+            context = torch.tensor(traj['context'], dtype=torch.float32)
+            second_traj = self.data[np.random.choice(self.valid_seconds[idx])]
+            st = random.randint(0, second_traj['current'].shape[0] - 1)
+            current = torch.tensor(second_traj['current'][st], dtype=torch.float32)
+            label = torch.tensor(second_traj['label'][st], dtype=torch.float32)
+        elif self.train_mode == "single-traj":
+            T = traj['context'].shape[0]
+            assert T > 6, f"{T}"
+            zt = random.randint(6, T - 1)
+            st = random.randint(zt, T - 1)
+            context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
+            current = torch.tensor(traj['current'][st], dtype=torch.float32)
+            label = torch.tensor(traj['label'][st], dtype=torch.float32)
         
         return context, current, label
 
@@ -141,15 +173,34 @@ def collate_fn(batch):
     
     return padded_contexts, currents, labels, padding_mask
 
-def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=1e-4, batch_size=64, device="cuda",
-        save_path=None):
+def train_behavior_cloning(
+        model,
+        train_data,
+        val_data,
+        epochs=100,
+        lr=1e-4,
+        batch_size=64,
+        device="cuda",
+        save_path=None,
+        train_mode: str = "single-traj",
+        closest_neighbors_radius: float = 0.001,
+        warm_start: int = 0,
+    ):
     train_loader = DataLoader(
-        IndependentTrajectoryDataset(train_data), 
+        IndependentTrajectoryDataset(
+            train_data,
+            train_mode=train_mode,
+            closest_neighbors_radius=closest_neighbors_radius,
+        ),
         batch_size=batch_size, shuffle=True, num_workers=4, 
         collate_fn=collate_fn, pin_memory=True
     )
     val_loader = DataLoader(
-        IndependentTrajectoryDataset(val_data), 
+        IndependentTrajectoryDataset(
+            val_data,
+            train_mode=train_mode,
+            closest_neighbors_radius=closest_neighbors_radius,
+        ),
         batch_size=batch_size, shuffle=False, num_workers=4, 
         collate_fn=collate_fn, pin_memory=True
     )
@@ -157,7 +208,17 @@ def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=1e-4, bat
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     criterion = nn.MSELoss()
     # Learning rate scheduler for better convergence
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    if warm_start <= 0:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    else:
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[
+                torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warm_start),
+                torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = epochs - warm_start),
+            ],
+            milestones=[warm_start],
+        )
 
     for epoch in range(epochs):
         model.train()
@@ -216,7 +277,14 @@ def train_behavior_cloning(model, train_data, val_data, epochs=100, lr=1e-4, bat
 def load_robot_policy(save_path, device="cpu"):
     with open(os.path.join(os.path.dirname(save_path), "info.pkl"), "rb") as fi:
         save_dict = pickle.load(fi)
-    model = RobotTransformerPolicy(save_dict['context_dim'], save_dict['current_dim'], save_dict['label_dim'])
+    model = RobotTransformerPolicy(
+        save_dict['context_dim'],
+        save_dict['current_dim'],
+        save_dict['label_dim'],
+        num_layers=save_dict['num_layers'],
+        d_model=save_dict['d_model'],
+        dropout=save_dict['dropout'],
+    )
     model.load_state_dict(torch.load(save_path, map_location=device))
     model.to(device)
     model.eval()
@@ -238,6 +306,9 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
     parser.add_argument("--dataset_path", type=str, default="N/A", help="Path to load the dataset")
+    parser.add_argument("--train_mode", type=str, default="single-traj", help="Options: single-traj, closest-neighbors.")
+    parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
+    parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     
     args = parser.parse_args()
 
@@ -285,6 +356,12 @@ def main():
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
         'label_dim': LABEL_DIM,
+        'd_model': D_MODEL,
+        'num_layers': NUM_LAYERS,
+        'dropout': DROPOUT,
+        'train_mode': args.train_mode,
+        'closest_neighbors_radius': args.closest_neighbors_radius,
+        'warm_start': args.warm_start,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
@@ -318,6 +395,7 @@ def main():
             'current': traj['obs']['policy2'],
             'label': (traj['actions_expert'] - traj['actions']) / label_stds,
             'choosable': traj['obs']['policy2'].shape[0] > 6,
+            'obs_receptive_noise': traj['obs_receptive_noise'],
             # 'choosable': not np.any(traj['rewards'] > 0.11),
         })
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
@@ -349,7 +427,19 @@ def main():
         wandb.watch(model)
 
     try:
-        train_behavior_cloning(model, train_data, val_data, epochs=EPOCHS, lr=LR, batch_size=BATCH_SIZE, device=device, save_path=save_path)
+        train_behavior_cloning(
+            model,
+            train_data,
+            val_data,
+            epochs=EPOCHS,
+            lr=LR,
+            batch_size=BATCH_SIZE,
+            device=device,
+            save_path=save_path,
+            train_mode=args.train_mode,
+            closest_neighbors_radius=args.closest_neighbors_radius,
+            warm_start=args.warm_start,
+        )
     finally:
         if ENABLE_WANDB:
             wandb.finish()

@@ -128,12 +128,13 @@ def set_positions_completely(env: ManagerBasedEnv, position: torch.Tensor, env_i
     asset2 = env.scene["insertive_object"]
     asset2.write_root_pose_to_sim(position[7:].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
 
-def render_frame(frame: np.ndarray, caption: str, display_action: np.ndarray = None):
+def render_frame(frame: np.ndarray, caption: str, display_action=None, display_action2=None):
     captions = caption.splitlines()
     IMAGE_SIZE = frame.shape[:2]
+    BOUNDARY_X = 5
+    BOUNDARY_Y = 5
 
     if display_action is not None:
-        coord = display_action[:2]
         # DRAW SECOND SCREEN #
         SECOND_SCREEN_TOP_MARGIN = 40
         SECOND_SCREEN_SIZE = (IMAGE_SIZE[0] - SECOND_SCREEN_TOP_MARGIN, IMAGE_SIZE[1])
@@ -147,18 +148,26 @@ def render_frame(frame: np.ndarray, caption: str, display_action: np.ndarray = N
 
         # Map the -5 to +5 range to pixel coordinates
         # Scale factor: pixels per unit
-        scale_x = w / 10
-        scale_y = h / 10
+        scale_x = w / (BOUNDARY_X + BOUNDARY_X)
+        scale_y = h / (BOUNDARY_Y + BOUNDARY_Y)
         
         # Calculate pixel position (Note: Y is inverted in screen space)
+        coord = display_action[:2]
         px = int(center[0] + coord[0] * scale_x)
         py = int(center[1] - coord[1] * scale_y)
-
-        # Logic: Draw circle if within (-5, 5), else draw ray
-        if abs(coord[0]) < 5 and abs(coord[1]) < 5:
+        if abs(coord[0]) < BOUNDARY_X and abs(coord[1]) < BOUNDARY_Y:
             cv2.circle(second_screen, (px, py), 5, (0, 255, 0), -1)
         else:
             cv2.line(second_screen, center, (px, py), (0, 255, 0), 2)
+        
+        if display_action2 is not None:
+            coord = display_action2[:2]
+            px = int(center[0] + coord[0] * scale_x)
+            py = int(center[1] - coord[1] * scale_y)
+            if abs(coord[0]) < BOUNDARY_X and abs(coord[1]) < BOUNDARY_Y:
+                cv2.circle(second_screen, (px, py), 5, (255, 0, 0), -1)
+            else:
+                cv2.line(second_screen, center, (px, py), (255, 0, 0), 2)
         # END DRAW SECOND SCREEN #
 
         top_margin = np.full((SECOND_SCREEN_TOP_MARGIN, IMAGE_SIZE[1], 3), 255, dtype=np.uint8)
@@ -375,9 +384,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(env.num_envs, 30)
             obs_tweaked['policy'][:, -30:] = receptive_state.reshape(env.num_envs, 30)
 
-            base_actions = policy(obs_tweaked)
+            base_actions_raw = policy(obs_tweaked)
 
-            base_actions += sys_noises
+            base_actions_raw += sys_noises
+            base_actions = base_actions_raw.clone()
 
             need_residuals = curstates > 0
             need_residuals_count = need_residuals.sum()
@@ -406,12 +416,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 
                 for i in range(env.num_envs):
                     assert frames[i].shape == (*IMAGE_SIZE, 3)
-                    display_action = expert_actions[i] - base_actions[i] if PLOT_RESIDUAL else None
+                    display_action = expert_actions[i] - base_actions_raw[i] if PLOT_RESIDUAL else None
+                    display_action2 = base_actions[i] - base_actions_raw[i] if PLOT_RESIDUAL else None
                     caption = f"t={timesteps[i].tolist()} r={reward[i]:.5f} done={dones[i]}"
                     if PLOT_RESIDUAL:
                         caption += f" residual-action={display_action}"
                     caption += f"\nnoise={obs_receptive_noise[i]}"
-                    final_screen = render_frame(frames[i], caption, display_action = display_action)
+                    final_screen = render_frame(frames[i], caption, display_action=display_action, display_action2=display_action2)
                     rec_video[i, curstates[i], timesteps[i, curstates[i]]] = final_screen
             
             timesteps[indices, curstates] += 1
