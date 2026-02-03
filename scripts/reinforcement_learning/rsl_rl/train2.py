@@ -282,6 +282,8 @@ def load_robot_policy(save_path, device="cpu"):
         'current_stds': np.ones((save_dict['current_dim'],)),
         'context_means': np.zeros((save_dict['context_dim'],)),
         'context_stds': np.ones((save_dict['context_dim'],)),
+        'label_means': np.zeros((save_dict['label_dim'],)),
+        'label_stds': np.ones((save_dict['label_dim'],)),
     } | save_dict
     model = RobotTransformerPolicy(
         save_dict['context_dim'],
@@ -315,6 +317,7 @@ def main():
     parser.add_argument("--train_mode", type=str, default="single-traj", help="Options: single-traj, closest-neighbors.")
     parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
+    parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     
     args = parser.parse_args()
 
@@ -348,13 +351,6 @@ def main():
         print("Data file not found.")
         return
     print("Loaded dataset.")
-    
-    
-    all_labels = np.concatenate([traj['actions_expert'] - traj['actions'] for traj in trajs], axis=0)
-    label_means = all_labels.mean(axis=0)
-    label_stds = all_labels.std(axis=0)
-    print(f"Label means = {label_means.tolist()}")
-    print(f"Label stds = {label_stds.tolist()}")
 
     processed_data = []
     for traj in trajs:
@@ -364,7 +360,7 @@ def main():
         processed_data.append({
             'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
             'current': traj['obs']['policy2'],
-            'label': (traj['actions_expert'] - traj['actions']) / label_stds,
+            'label': traj['actions_expert'] - traj['actions'],
             'choosable': traj['obs']['policy2'].shape[0] > 6,
             'obs_receptive_noise': traj['obs_receptive_noise'],
             # 'choosable': not np.any(traj['rewards'] > 0.11),
@@ -380,17 +376,23 @@ def main():
     all_contexts = np.concatenate([traj['context'] for traj in processed_data], axis=0)
     context_means = all_contexts.mean(axis=0)
     context_stds = all_contexts.std(axis=0)
+    all_labels = np.concatenate([traj['label'] for traj in processed_data], axis=0)
+    label_means = all_labels.mean(axis=0)
+    label_stds = all_labels.std(axis=0)
     for traj in processed_data:
         traj['current'] = (traj['current'] - current_means) / current_stds
         traj['context'] = (traj['context'] - context_means) / context_stds
+        traj['label'] = (traj['label'] - label_means) / label_stds
 
     save_dict = {
         'dataset_origin': os.path.abspath(DATASET_PATH),
-        'label_stds': label_stds.tolist(),
+        'save_path': save_path,
         'current_means': current_means,
         'current_stds': current_stds,
         'context_means': context_means,
         'context_stds': context_stds,
+        'label_means': label_means,
+        'label_stds': label_stds,
         'context_dim': CONTEXT_DIM,
         'current_dim': CURRENT_DIM,
         'label_dim': LABEL_DIM,
@@ -400,6 +402,7 @@ def main():
         'train_mode': args.train_mode,
         'closest_neighbors_radius': args.closest_neighbors_radius,
         'warm_start': args.warm_start,
+        'train_percent': args.train_percent,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
@@ -432,9 +435,10 @@ def main():
         return
 
     random.shuffle(processed_data)
-    split = int(len(processed_data) * 0.8)
+    split = int(len(processed_data) * args.train_percent)
     train_data = processed_data[:split]
     val_data = processed_data[split:]
+    print(f"Train percent: {args.train_percent} !")
 
     # Final safeguard: ensure both splits have at least one choosable traj
     if not any(d['choosable'] for d in val_data):

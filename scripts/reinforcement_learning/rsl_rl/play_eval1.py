@@ -321,7 +321,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     CORRECTION_MODEL_FILE = os.path.abspath(args_cli.correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
-    action_multiplier = torch.tensor(correction_model_info["label_stds"], dtype=torch.float32, device=args_cli.device)
+    label_stds = torch.tensor(correction_model_info["label_stds"], dtype=torch.float32, device=args_cli.device)
+    label_means = torch.tensor(correction_model_info["label_means"], dtype=torch.float32, device=args_cli.device)
     current_means = torch.tensor(correction_model_info["current_means"], dtype=torch.float32, device=args_cli.device)
     current_stds = torch.tensor(correction_model_info["current_stds"], dtype=torch.float32, device=args_cli.device)
     context_means = torch.tensor(correction_model_info["context_means"], dtype=torch.float32, device=args_cli.device)
@@ -403,7 +404,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 contexts = (contexts - context_means) / context_stds
                 currents = (currents - current_means) / current_stds
                 residual_actions = correction_model(contexts, currents, padding_mask)
-                base_actions[need_residuals, :] += residual_actions * action_multiplier
+                residual_actions = residual_actions * label_stds + label_means
+                base_actions[need_residuals, :] += residual_actions
             
             # step
             next_obs, reward, dones, info = env.step(base_actions)
@@ -494,6 +496,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     
     # close the simulator
     env.close()
+    print(f"Loading model at {CORRECTION_MODEL_FILE}")
 
 
 if __name__ == "__main__":

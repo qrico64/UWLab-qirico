@@ -15,7 +15,7 @@ def main():
     elimination_count = 0
     for traj in trajs:
         max_action_magnitude = np.linalg.norm(traj['actions'], axis=-1).max()
-        if max_action_magnitude > 100:
+        if max_action_magnitude > 100 or traj['actions'].shape[0] < 15:
             elimination_count += 1
             continue
         

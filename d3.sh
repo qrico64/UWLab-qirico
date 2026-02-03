@@ -7,11 +7,12 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --d_model 512 \
     --dropout 0.1 \
     --batch_size 256 \
-    --save_path experiments/jan30/obsnoise_50percent_closeneighbors_currentnorm_contextnorm \
+    --save_path experiments/feb2/obsnoise_0.01_normboth_0.8dataset \
     --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/job-True-0.0-0.0-60000-60--0.01-0.0/cut-trajectories.pkl \
     --train_mode closest-neighbors \
     --closest_neighbors_radius 0.001 \
     --warm_start 10 \
+    --train_percent 0.8 \
 
 # python scripts/reinforcement_learning/rsl_rl/train_mlp.py \
 #     --lr 0.0003 \
