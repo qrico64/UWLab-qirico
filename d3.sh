@@ -1,8 +1,6 @@
 python scripts/reinforcement_learning/rsl_rl/train2.py \
     --lr 0.0003 \
     --epochs 300 \
-    --action_low -0.999 \
-    --action_high 0.999 \
     --num_layers 4 \
     --d_model 512 \
     --dropout 0.1 \

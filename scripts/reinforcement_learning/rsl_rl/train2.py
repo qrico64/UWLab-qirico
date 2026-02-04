@@ -341,8 +341,6 @@ def main():
     # Adding parameters
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
-    parser.add_argument("--action_low", type=float, default=-0.999, help="Minimum action value")
-    parser.add_argument("--action_high", type=float, default=0.999, help="Maximum action value")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--d_model", type=int, default=256, help="Transformer & MLP hidden dimension")
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers")
@@ -360,8 +358,6 @@ def main():
     # Accessing the parameters
     LR = args.lr
     EPOCHS = args.epochs
-    ACTION_LOW = args.action_low
-    ACTION_HIGH = args.action_high
     BATCH_SIZE = args.batch_size
 
     D_MODEL = args.d_model

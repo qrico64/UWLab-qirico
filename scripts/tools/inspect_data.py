@@ -5,6 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from mpl_toolkits.mplot3d import Axes3D
+from pathlib import Path
 
 def format_array_3dec(x: np.ndarray) -> str:
     if isinstance(x, torch.Tensor):
@@ -120,21 +121,24 @@ def plot_actions_tsne(actions, n_components=2, filename="tsne_plot.png"):
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/job-True-0.0-0.0-60000-60--0.01-0.0/cut-trajectories.pkl"
-    VIZ_DIR = f"viz/jan29/{os.path.basename(FILENAME)[:-4]}/"
-    os.makedirs(VIZ_DIR, exist_ok=True)
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb4/expertcol2/job-True-0.0-4.0-100000-60--0.0-0.0/trajectories.pkl"
+    FILENAME = Path(FILENAME)
+    VIZ_DIR = FILENAME.parent / "viz"
+    VIZ_DIR.mkdir(exist_ok=True, parents=True)
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
     lengths = [traj['actions'].shape[0] for traj in trajs]
-    save_histogram(lengths, VIZ_DIR + "lengths.png", bins=40)
-    starting_positions = np.stack([traj['starting_position'][:2] for traj in trajs], axis=0)
-    save_point_distribution_image(starting_positions, VIZ_DIR + "starting_positions.png")
+    save_histogram(lengths, VIZ_DIR / "lengths.png", bins=40)
+    receptive_starting_positions = np.stack([traj['starting_position']['receptive_position'][:2] for traj in trajs], axis=0)
+    save_point_distribution_image(receptive_starting_positions, VIZ_DIR / "receptive_starting_positions.png")
+    insertive_starting_positions = np.stack([traj['starting_position']['insertive_position'][:2] for traj in trajs], axis=0)
+    save_point_distribution_image(insertive_starting_positions, VIZ_DIR / "insertive_starting_positions.png")
     rewards = np.concatenate([traj['rewards'] for traj in trajs], axis=0)
     rewards = np.maximum(rewards, np.quantile(rewards, 0.01))
-    save_histogram(rewards, VIZ_DIR + "rewards.png", bins=100)
+    save_histogram(rewards, VIZ_DIR / "rewards.png", bins=100)
     actions = np.concatenate([traj['actions'] for traj in trajs], axis=0)
     action_magnitudes = np.linalg.norm(actions, axis=1)
-    save_histogram(action_magnitudes, VIZ_DIR + "action_magnitudes.png", bins=100)
+    save_histogram(action_magnitudes, VIZ_DIR / "action_magnitudes.png", bins=100)
 
     action_low = []
     action_high = []
@@ -151,20 +155,20 @@ def main():
         action_high.append(round(np.quantile(actions_1dim, 0.9), 2))
         print(f"Action dim {i}: 10% = {np.quantile(actions_1dim, 0.1)}, 90% = {np.quantile(actions_1dim, 0.9)}")
         actions_1dim = np.clip(actions_1dim, np.quantile(actions_1dim, 0.01), np.quantile(actions_1dim, 0.99))
-        save_histogram(actions_1dim, VIZ_DIR + f"action_dim_{i}.png", bins=100)
+        save_histogram(actions_1dim, VIZ_DIR / f"action_dim_{i}.png", bins=100)
 
         sys_noise_1dim = sys_noise[:, i]
-        save_histogram(sys_noise_1dim, VIZ_DIR + f"sys_noise_{i}.png", bins=100)
+        save_histogram(sys_noise_1dim, VIZ_DIR / f"sys_noise_{i}.png", bins=100)
 
         residual_actions_1dim = residual_actions[:, i]
-        save_histogram(residual_actions_1dim, VIZ_DIR + f"residual_action_{i}.png", bins=100)
+        save_histogram(residual_actions_1dim, VIZ_DIR / f"residual_action_{i}.png", bins=100)
     
     for i in range(6):
         obs_receptive_noise_1dim = obs_receptive_noise[:, i]
-        save_histogram(obs_receptive_noise_1dim, VIZ_DIR + f"obs_receptive_noise_{i}.png", bins=100)
+        save_histogram(obs_receptive_noise_1dim, VIZ_DIR / f"obs_receptive_noise_{i}.png", bins=100)
 
         obs_insertive_noise_1dim = obs_insertive_noise[:, i]
-        save_histogram(obs_insertive_noise_1dim, VIZ_DIR + f"obs_insertive_noise_{i}.png", bins=100)
+        save_histogram(obs_insertive_noise_1dim, VIZ_DIR / f"obs_insertive_noise_{i}.png", bins=100)
     
     print(f"action low = {action_low}")
     print(f"action high = {action_high}")
