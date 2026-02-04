@@ -83,3 +83,5 @@ isaac-sim.action_and_event_data_generation.sh
 /viz/
 /models/
 /experiments/
+
+peg_state_rl_expert.pt*

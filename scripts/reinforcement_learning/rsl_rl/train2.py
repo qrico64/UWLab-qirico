@@ -10,9 +10,26 @@ import math
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import argparse
+import matplotlib.pyplot as plt
 
 
 ENABLE_WANDB = True
+
+def save_histogram(x, filename, bins=100):
+    # convert to numpy
+    if hasattr(x, "detach"):  # torch tensor
+        x = x.detach().cpu().numpy()
+    else:
+        x = np.asarray(x)
+
+    x = x.reshape(-1)
+
+    plt.figure()
+    plt.hist(x, bins=bins)
+    plt.tight_layout()
+    plt.savefig(filename)
+    print(filename)
+    plt.close()
 
 def model_has_nan_or_inf(model):
     for name, param in model.named_parameters():
@@ -450,6 +467,12 @@ def main():
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
         pickle.dump(save_dict, fi)
+
+    viz_path = os.path.join(save_path, "viz")
+    os.makedirs(viz_path, exist_ok=True)
+    all_labels_viz = np.concatenate([traj['label'] for traj in processed_data], axis=0)
+    for i in range(LABEL_DIM):
+        save_histogram(all_labels_viz[:, i], os.path.join(viz_path, f"label_{i}.png"))
 
     num_choosable = sum(1 for d in processed_data if d['choosable'])
     print(f"Total Trajectories: {len(processed_data)}")
