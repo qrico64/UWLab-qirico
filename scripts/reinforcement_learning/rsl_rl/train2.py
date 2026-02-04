@@ -120,7 +120,7 @@ class IndependentTrajectoryDataset(Dataset):
                 cur_seconds = np.where((cur_distances <= closest_neighbors_radius) & (cur_distances > 0))[0]
                 self.choosable_trajs.append(traj)
                 self.valid_seconds.append(cur_seconds)
-                if i < 10:
+                if i < 20:
                     print(self.valid_seconds[-1].shape)
         elif train_mode == "single-traj":
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
@@ -220,6 +220,9 @@ def train_behavior_cloning(
             milestones=[warm_start],
         )
 
+    fixed_epochs = []
+    best_loss = 100000
+    best_loss_epoch = -1
     for epoch in range(epochs):
         model.train()
         train_loss = 0
@@ -268,6 +271,20 @@ def train_behavior_cloning(
             csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
             torch.save(model.state_dict(), csp)
             print(f"Model at epoch {epoch} saved to {csp}")
+            fixed_epochs.append(epoch)
+        
+        if epoch > 40 and avg_val_loss < best_loss and save_path is not None and epoch not in fixed_epochs:
+            best_loss = avg_val_loss
+            if best_loss_epoch not in fixed_epochs:
+                csp = os.path.join(save_path, f"{best_loss_epoch}-ckpt.pt")
+                if os.path.exists(csp):
+                    os.unlink(csp)
+                    print(f"Model at epoch {best_loss_epoch} removed.")
+            best_loss_epoch = epoch
+            csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
+            torch.save(model.state_dict(), csp)
+            print(f"Best model at epoch {epoch} saved to {csp}")
+
     
     if save_path is not None:
         csp = os.path.join(save_path, f"{epochs}-ckpt.pt")
@@ -284,6 +301,7 @@ def load_robot_policy(save_path, device="cpu"):
         'context_stds': np.ones((save_dict['context_dim'],)),
         'label_means': np.zeros((save_dict['label_dim'],)),
         'label_stds': np.ones((save_dict['label_dim'],)),
+        'train_expert': False,
     } | save_dict
     model = RobotTransformerPolicy(
         save_dict['context_dim'],
@@ -318,6 +336,7 @@ def main():
     parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
+    parser.add_argument("--train_expert", action="store_true", default=False, help="Whether we're training an expert or a residual.")
     
     args = parser.parse_args()
 
@@ -357,14 +376,19 @@ def main():
         if traj['rewards'].ndim == 1:
             traj['rewards'] = traj['rewards'][:, None]
         
-        processed_data.append({
+        processed_traj = {
             'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
             'current': traj['obs']['policy2'],
             'label': traj['actions_expert'] - traj['actions'],
             'choosable': traj['obs']['policy2'].shape[0] > 6,
             'obs_receptive_noise': traj['obs_receptive_noise'],
             # 'choosable': not np.any(traj['rewards'] > 0.11),
-        })
+        }
+        if args.train_expert:
+            processed_traj['context'] *= 0
+            processed_traj['label'] = traj['actions_expert']
+        
+        processed_data.append(processed_traj)
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
     assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
     assert processed_data[0]['label'].shape[-1] == LABEL_DIM
@@ -375,7 +399,7 @@ def main():
     current_stds = all_currents.std(axis=0)
     all_contexts = np.concatenate([traj['context'] for traj in processed_data], axis=0)
     context_means = all_contexts.mean(axis=0)
-    context_stds = all_contexts.std(axis=0)
+    context_stds = all_contexts.std(axis=0) + 1e-9
     all_labels = np.concatenate([traj['label'] for traj in processed_data], axis=0)
     label_means = all_labels.mean(axis=0)
     label_stds = all_labels.std(axis=0)
@@ -403,6 +427,7 @@ def main():
         'closest_neighbors_radius': args.closest_neighbors_radius,
         'warm_start': args.warm_start,
         'train_percent': args.train_percent,
+        'train_expert': args.train_expert,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:

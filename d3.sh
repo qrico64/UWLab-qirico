@@ -13,6 +13,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --closest_neighbors_radius 0.001 \
     --warm_start 10 \
     --train_percent 0.8 \
+    # --train_expert
 
 # python scripts/reinforcement_learning/rsl_rl/train_mlp.py \
 #     --lr 0.0003 \

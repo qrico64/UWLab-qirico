@@ -332,6 +332,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
     assert correction_model_info['label_dim'] == A_DIM
 
+    TRAIN_EXPERT = correction_model_info['train_expert']
+
     N_DIM = 2
     timesteps = torch.zeros(env.num_envs, N_DIM, dtype=torch.int64, device=args_cli.device)
     successes = torch.zeros(env.num_envs, N_DIM, dtype=torch.bool, device=args_cli.device)
@@ -405,7 +407,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 currents = (currents - current_means) / current_stds
                 residual_actions = correction_model(contexts, currents, padding_mask)
                 residual_actions = residual_actions * label_stds + label_means
-                base_actions[need_residuals, :] += residual_actions
+                if TRAIN_EXPERT:
+                    base_actions[need_residuals, :] = residual_actions
+                else:
+                    base_actions[need_residuals, :] += residual_actions
             
             # step
             next_obs, reward, dones, info = env.step(base_actions)
