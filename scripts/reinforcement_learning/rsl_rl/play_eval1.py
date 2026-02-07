@@ -64,6 +64,7 @@ import imageio
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import cv2
+import pathlib
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -113,20 +114,17 @@ def get_positions(env: ManagerBasedEnv):
     orientations2 = asset2.data.root_quat_w
     return torch.cat([positions, orientations, positions2, orientations2], dim=-1)
 
-def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
-    asset = env.scene["receptive_object"]
-    positions = asset.data.root_pos_w
-    orientations = asset.data.root_quat_w
-    env_ids = torch.arange(env.num_envs, device=env.device)
-    positions_orientations = torch.cat([positions, orientations], dim=-1)
-    positions_orientations[env_id] = position
-    asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
-
 def set_positions_completely(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
     asset = env.scene["receptive_object"]
     asset.write_root_pose_to_sim(position[:7].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
     asset2 = env.scene["insertive_object"]
     asset2.write_root_pose_to_sim(position[7:].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
+
+def get_starting_position(env: ManagerBasedEnv):
+    origins = env.unwrapped.scene.env_origins
+    receptive_position = env.unwrapped.scene["receptive_object"].data.root_pos_w - origins
+    insertive_position = env.unwrapped.scene["insertive_object"].data.root_pos_w - origins
+    return torch.concatenate([receptive_position[:, :2], insertive_position[:, :2]], dim=1)
 
 def render_frame(frame: np.ndarray, caption: str, display_action=None, display_action2=None):
     captions = caption.splitlines()
@@ -320,6 +318,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     T_DIM = args_cli.horizon
     CORRECTION_MODEL_FILE = os.path.abspath(args_cli.correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
+    VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
     correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
     label_stds = torch.tensor(correction_model_info["label_stds"], dtype=torch.float32, device=args_cli.device)
     label_means = torch.tensor(correction_model_info["label_means"], dtype=torch.float32, device=args_cli.device)
@@ -327,6 +326,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     current_stds = torch.tensor(correction_model_info["current_stds"], dtype=torch.float32, device=args_cli.device)
     context_means = torch.tensor(correction_model_info["context_means"], dtype=torch.float32, device=args_cli.device)
     context_stds = torch.tensor(correction_model_info["context_stds"], dtype=torch.float32, device=args_cli.device)
+
+    print()
+    print(f"label_stds: {label_stds}")
+    print(f"label_means: {label_means}")
+    print(f"current_stds: {current_stds}")
+    print(f"current_means: {current_means}")
+    print(f"current_stds: {current_stds}")
+    print(f"current_means: {current_means}")
+    print()
     
     assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
@@ -341,6 +349,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     rec_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
     rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
     curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
+    trajectory_start_position = get_starting_position(env)
+
+    result_success_distribution = []
     
     obs = env.get_observations()
 
@@ -452,6 +463,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         count_completed += 1
                         count_success_first_try += curstates[i] == 0 and successes[i, curstates[i]]
                         count_success_second_try += curstates[i] == 1 and successes[i, curstates[i]]
+                        if curstates[i] == 1 and successes[i, curstates[i]]:
+                            result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), True])
+                        elif not successes[i, curstates[i]]:
+                            result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), False])
                         # print(f"Environment {i} has finished with {['fail', 'success'][successes[i]]} at stage {curstates[i]}")
 
                         if args_cli.enable_cameras:
@@ -480,7 +495,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         if count_completed % 20 == 0:
                             print(f"First try success rate: {count_success_first_try / count_completed}; Second try success rate: {count_success_second_try / (count_completed - count_success_first_try)}")
                             print(f"{count_completed} {count_success_first_try} {count_success_second_try}")
-                            print()
+                        
+                        if count_completed % 100 == 0 and len(result_success_distribution) > 0:
+                            print(f"Success distribution size {len(result_success_distribution)}")
+                            success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
+                            success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
+                            cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", bins=10)
+                            cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", bins=10)
+                        print()
 
                         rec_observations[i] *= 0
                         rec_actions[i] *= 0
@@ -492,6 +514,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
                         obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
                         starting_positions[i] = get_positions(env.env.env)[i]
+                        trajectory_start_position[i] = get_starting_position(env)[i]
                     else:
                         curstates[i] += 1
                         set_positions_completely(env.env.env, starting_positions[i], i)
