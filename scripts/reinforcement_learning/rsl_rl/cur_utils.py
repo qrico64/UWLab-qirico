@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 
 def axis_angle_to_matrix(axis_angle):
     # axis_angle shape: (N, 3)
@@ -64,3 +66,64 @@ def predict_relative_pose(insertive_pose, receptive_pose):
     r_rel_aa = matrix_to_axis_angle(R_rel) # (N, 3)
     
     return torch.cat([p_rel, r_rel_aa], dim=-1) # (N, 6)
+
+
+def plot_success_grid(coords, success, bins=30, save_path=None, xrange=None, yrange=None):
+    coords = np.asarray(coords)
+    success = np.asarray(success).astype(float)
+
+    x, y = coords[:, 0], coords[:, 1]
+
+    if xrange is None:
+        xrange = (x.min(), x.max())
+    if yrange is None:
+        yrange = (y.min(), y.max())
+
+    counts, xedges, yedges = np.histogram2d(
+        x, y, bins=bins, range=[xrange, yrange]
+    )
+    sums, _, _ = np.histogram2d(
+        x, y, bins=bins, range=[xrange, yrange], weights=success
+    )
+
+    rate = np.divide(sums, counts, out=np.full_like(sums, np.nan), where=counts > 0)
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(
+        rate.T,
+        origin="lower",
+        extent=[*xrange, *yrange],
+        aspect="auto",
+        vmin=0, vmax=1,
+        cmap="viridis"
+    )
+    fig.colorbar(im, ax=ax, label="Success rate")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title("Grid Success Rate")
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+        print(save_path)
+
+    plt.close(fig)
+
+
+def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
+    """
+    x: torch.Tensor, shape (N, 2) on CPU or GPU
+    Saves a 2D histogram (density map) visualization to out_path.
+    """
+    if isinstance(x, torch.Tensor):
+        x = x.detach()
+        if x.is_cuda:
+            x = x.cpu()
+        x = x.float().numpy()
+
+    fig, ax = plt.subplots()
+    ax.hist2d(x[:, 0], x[:, 1], bins=bins)
+    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("2D point distribution")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+    print(f"Saved to: {out_path}")

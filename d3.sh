@@ -11,7 +11,27 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --closest_neighbors_radius 0.001 \
     --warm_start 10 \
     --train_percent 0.8 \
-    # --train_expert
+
+
+
+# python scripts/reinforcement_learning/rsl_rl/train2.py \
+#     --lr 0.0003 \
+#     --epochs 300 \
+#     --num_layers 4 \
+#     --d_model 512 \
+#     --dropout 0.1 \
+#     --batch_size 256 \
+#     --save_path experiments/feb5/expert-ds_random5-yleq_02-30k_trajs-2 \
+#     --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb4/expertcol5/job-True-0.0-5.0-100000-60--0.0-0.0/cut-trajectories.pkl \
+#     --train_mode autoregressive \
+#     --closest_neighbors_radius 0.001 \
+#     --warm_start 10 \
+#     --train_percent 0.8 \
+#     --train_expert \
+#     --receptive_yhigh 0.2 \
+#     --insertive_yhigh 0.2 \
+
+
 
 # python scripts/reinforcement_learning/rsl_rl/train_mlp.py \
 #     --lr 0.0003 \

@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import argparse
 import matplotlib.pyplot as plt
+import cur_utils
 
 
 ENABLE_WANDB = True
@@ -130,9 +131,11 @@ class IndependentTrajectoryDataset(Dataset):
             self.valid_seconds = []
             for i, traj in tqdm(enumerate(data)):
                 if not traj.get('choosable', False):
+                    if i < 20: print("(skipped due to unchoosable)")
                     continue
                 cur_distances = np.linalg.norm(self.all_receptive_noises - traj['obs_receptive_noise'], axis=-1)
                 if (((cur_distances <= closest_neighbors_radius) & (cur_distances > 0)).sum() == 0):
+                    if i < 20: print("(skipped due to no neighbors)")
                     continue
                 cur_seconds = np.where((cur_distances <= closest_neighbors_radius) & (cur_distances > 0))[0]
                 self.choosable_trajs.append(traj)
@@ -140,6 +143,8 @@ class IndependentTrajectoryDataset(Dataset):
                 if i < 20:
                     print(self.valid_seconds[-1].shape)
         elif train_mode == "single-traj":
+            self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
+        elif train_mode == "autoregressive":
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
         else:
             raise NotImplementedError(train_mode)
@@ -166,6 +171,15 @@ class IndependentTrajectoryDataset(Dataset):
             context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
             current = torch.tensor(traj['current'][st], dtype=torch.float32)
             label = torch.tensor(traj['label'][st], dtype=torch.float32)
+        elif self.train_mode == "autoregressive":
+            T = traj['context'].shape[0]
+            assert T > 6, f"{T}"
+            zt = random.randint(1, T - 1)
+            context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
+            current = torch.tensor(traj['current'][zt], dtype=torch.float32)
+            label = torch.tensor(traj['label'][zt], dtype=torch.float32)
+        else:
+            raise NotImplementedError(self.train_mode)
         
         return context, current, label
 
@@ -369,6 +383,9 @@ def main():
     CONTEXT_DIM = 45 + 7
     CURRENT_DIM = 45
     LABEL_DIM = 7
+
+    if args.train_expert:
+        assert args.train_mode in ["autoregressive"]
 
     if ENABLE_WANDB:
         wandb.init(project="robot-transformer-bc-deterministic-normalized-labels", config=vars(args))
