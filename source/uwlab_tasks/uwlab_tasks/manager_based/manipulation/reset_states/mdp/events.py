@@ -1083,16 +1083,16 @@ class MultiResetManager(ManagerTermBase):
                 raise FileNotFoundError(f"Dataset file {dataset_file} could not be accessed or downloaded.")
 
             dataset = torch.load(local_file_path)
-            all_root_poses = torch.stack(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'], dim=0)
-            all_root_poses = all_root_poses[(all_root_poses[:, 0] > 0.3) & (all_root_poses[:, 0] < 0.55) & (all_root_poses[:, 1] > -0.1) & (all_root_poses[:, 1] < 0.5)]
-            save_point_distribution_image(all_root_poses, "viz/processed_dist.png")
-            
-            # init_indices = all_root_poses[:, 0] < 0.425
-            # init_indices = (all_root_poses[:, 2] > 0.0014) & (all_root_poses[:, 2] < 0.0016)
-            # init_indices = torch.nonzero(init_indices).squeeze(-1).to(device=env.device)
-            init_indices = torch.arange(all_root_poses.shape[0], device=env.device)
 
-            print(f"For dataset {dataset_file}, loaded {len(init_indices)}/{all_root_poses.shape[0]}/{len(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'])} reset states!!!")
+            all_insertive_poses = torch.stack(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'], dim=0)
+            all_receptive_poses = torch.stack(dataset['initial_state']['rigid_object']['receptive_object']['root_pose'], dim=0)
+            init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
+            init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+            init_indices = torch.nonzero(init_indices_mask).squeeze(-1).to(device=env.device)
+            save_point_distribution_image(all_insertive_poses[init_indices], "viz/insertive_distribution.png")
+            save_point_distribution_image(all_receptive_poses[init_indices], "viz/receptive_distribution.png")
+
+            print(f"For dataset {dataset_file}, loaded {len(init_indices)}/{len(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'])} reset states!!!")
             num_states.append(len(init_indices))
             self.datasets.append(sample_state_data_set(dataset, init_indices, env.device))
 

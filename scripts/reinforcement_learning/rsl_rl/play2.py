@@ -102,16 +102,16 @@ def get_positions(env: ManagerBasedEnv):
     asset = env.scene["receptive_object"]
     positions = asset.data.root_pos_w
     orientations = asset.data.root_quat_w
-    return torch.cat([positions, orientations], dim=-1)
+    asset2 = env.scene["insertive_object"]
+    positions2 = asset2.data.root_pos_w
+    orientations2 = asset2.data.root_quat_w
+    return torch.cat([positions, orientations, positions2, orientations2], dim=-1)
 
-def set_positions(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
+def set_positions_completely(env: ManagerBasedEnv, position: torch.Tensor, env_id: int):
     asset = env.scene["receptive_object"]
-    positions = asset.data.root_pos_w
-    orientations = asset.data.root_quat_w
-    env_ids = torch.arange(env.num_envs, device=env.device)
-    positions_orientations = torch.cat([positions, orientations], dim=-1)
-    positions_orientations[env_id] = position
-    asset.write_root_pose_to_sim(positions_orientations, env_ids=env_ids)
+    asset.write_root_pose_to_sim(position[:7].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
+    asset2 = env.scene["insertive_object"]
+    asset2.write_root_pose_to_sim(position[7:].unsqueeze(0).clone(), env_ids=torch.tensor([env_id], device=env.device))
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -236,6 +236,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         for _ in range(env.num_envs)
     ]
     total_recorded = 0
+    total_successes = 0
     
     starting_set_positions = get_positions(env.env.env)
 
@@ -288,10 +289,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     break
                 
                 if current_episodes[i]["starting_position"] is None:
-                    obj_pos_w = env.unwrapped.scene["receptive_object"].data.root_pos_w
                     origins = env.unwrapped.scene.env_origins
-                    obj_pos_in_env = obj_pos_w - origins
-                    current_episodes[i]["starting_position"] = obj_pos_in_env[i].clone().detach().cpu().numpy()
+                    receptive_position = env.unwrapped.scene["receptive_object"].data.root_pos_w - origins
+                    insertive_position = env.unwrapped.scene["insertive_object"].data.root_pos_w - origins
+                    current_episodes[i]["starting_position"] = {
+                        'receptive_position': receptive_position[i],
+                        'insertive_position': insertive_position[i],
+                    }
                 
                 # Append to active buffers
                 for k in obskeys:
@@ -313,7 +317,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         "next_obs": {k: np.array(v) for k, v in current_episodes[i]["next_obs"].items()},
                         "actions_expert": np.array(current_episodes[i]["actions_expert"]),
                         "sys_noise": np.array(current_episodes[i]["sys_noise"]),
-                        "starting_position": np.array(current_episodes[i]["starting_position"]),
+                        "starting_position": {k: v.detach().cpu().numpy() for k, v in current_episodes[i]["starting_position"].items()},
                         "obs_receptive_noise": np.array(current_episodes[i]["obs_receptive_noise"]),
                         "obs_insertive_noise": np.array(current_episodes[i]["obs_insertive_noise"]),
                         "starting_set_positions": starting_set_positions[i].cpu().detach().numpy(),
@@ -321,10 +325,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     recorded_trajectories.append(trajectory)
                     pbar.update(1) # Update progress bar
                     total_recorded += 1
+                    total_successes += int(np.any(np.array(current_episodes[i]["rewards"]) > 0.11))
 
                     # --- Save Trajectories ---
                     if len(recorded_trajectories) % 100 == 0:
-                        print(f"[INFO] Saving {len(recorded_trajectories)} trajectories to {savefile}")
+                        print(f"[INFO] Saving {len(recorded_trajectories)} trajectories to {savefile}", file=sys.stderr)
+                        print(f"[INFO] Out of {total_recorded}, {total_successes} ({total_successes / total_recorded:.3f}) are successes.", file=sys.stderr)
                         with open(savefile, "wb") as f:
                             pickle.dump(recorded_trajectories, f)
                     
