@@ -37,6 +37,7 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
 parser.add_argument("--correction_model", type=str, default="N/A", help="Residual model .pt file.")
 parser.add_argument("--plot_residual", action="store_true", default=False, help="Open second screen & plot residual.")
+parser.add_argument("--video_path", type=str, default="./viz/test", help="Save location for videos.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -374,7 +375,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.enable_cameras:
         PLOT_RESIDUAL = args_cli.plot_residual
         rec_video = np.zeros((env.num_envs, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
-        VIDEO_PATH = "./viz/test/video.mp4"
+        VIDEO_PATH = args_cli.video_path
+        os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
         NUM_VIDEOS = 6
         VIDEO_FPS = 5
@@ -386,6 +388,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # reset environment
 
+    SUCCESS_THRESHOLD = 0.11
     global_timestep = 0
     count_completed = 0
     count_success_first_try = 0
@@ -432,7 +435,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
             rec_actions[indices, curstates, cur_timesteps, :] = base_actions
             rec_rewards[indices, curstates, cur_timesteps] = reward
-            successes[indices, curstates] |= reward > 0.11
+            successes[indices, curstates] |= reward >= SUCCESS_THRESHOLD
 
             if args_cli.enable_cameras:
                 frames = obs['rgb'].cpu().detach().numpy().transpose(0, 2, 3, 1)
@@ -441,12 +444,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 
                 for i in range(env.num_envs):
                     assert frames[i].shape == (*IMAGE_SIZE, 3)
-                    display_action = expert_actions[i] - base_actions_raw[i] if PLOT_RESIDUAL else None
-                    display_action2 = base_actions[i] - base_actions_raw[i] if PLOT_RESIDUAL else None
+                    if PLOT_RESIDUAL:
+                        display_action = expert_actions[i] - base_actions_raw[i]
+                        display_action2 = base_actions[i] - base_actions_raw[i]
+                        display_action_str = '[' + ', '.join([f"{x:.3f}" for x in display_action.tolist()]) + ']'
+                        display_action2_str = '[' + ', '.join([f"{x:.3f}" for x in display_action2.tolist()]) + ']'
+                    else:
+                        display_action = display_action2 = None
+                        display_action_str = display_action2_str = "None"
                     caption = f"t={timesteps[i].tolist()} r={reward[i]:.5f} done={dones[i]}"
                     if PLOT_RESIDUAL:
-                        caption += f" residual-action={display_action}"
-                    caption += f"\nnoise={obs_receptive_noise[i]}"
+                        caption += f" residual-action={display_action_str}"
+                    caption += f"\npred-action={display_action2_str}"
                     final_screen = render_frame(frames[i], caption, display_action=display_action, display_action2=display_action2)
                     rec_video[i, curstates[i], timesteps[i, curstates[i]]] = final_screen
             
@@ -474,14 +483,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                                 # first try success
                                 if count_success_first_try_video < NUM_VIDEOS:
                                     videopath = videopath_generator(0, count_success_first_try_video)
-                                    frames = rec_video[i, curstates[i], :timesteps[i, curstates[i]]]
+                                    maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
+                                    maxt = min(maxt + 1, timesteps[i, curstates[i]])
+                                    print(f"maxt = {maxt}")
+                                    frames = rec_video[i, curstates[i], :maxt]
                                     save_video(frames, videopath, fps=VIDEO_FPS)
                                     count_success_first_try_video += 1
                             elif curstates[i] == 1 and successes[i, curstates[i]]:
                                 # second try success
                                 if count_success_second_try_video < NUM_VIDEOS:
                                     videopath = videopath_generator(1, count_success_second_try_video)
-                                    frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
+                                    maxt = (rec_rewards[i, 1] < SUCCESS_THRESHOLD).sum()
+                                    maxt = min(maxt + 1, timesteps[i, 1])
+                                    print(f"maxt = {maxt}")
+                                    frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :maxt]], axis=0)
                                     save_video(frames, videopath, fps=VIDEO_FPS)
                                     count_success_second_try_video += 1
                             else:
