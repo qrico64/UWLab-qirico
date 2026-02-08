@@ -58,8 +58,19 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, :x.size(1)]
         return x
 
+def block(in_dim: int, out_dim: int, dropout: float) -> list[nn.Module]:
+    return [
+        nn.Linear(in_dim, out_dim),
+        nn.ReLU(),
+    ]
+
 class RobotTransformerPolicy(nn.Module):
-    def __init__(self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=512, dropout=0.1):
+    def __init__(
+            self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=512, dropout=0.1,
+            use_new_head_arch=False,
+            num_head_layers=3,
+            d_model_head=1024,
+        ):
         super().__init__()
         self.context_proj = nn.Linear(context_dim, d_model)
         self.ctx_norm = nn.LayerNorm(d_model)
@@ -72,13 +83,28 @@ class RobotTransformerPolicy(nn.Module):
             batch_first=True, dropout=dropout
         )
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
-        self.head = nn.Sequential(
-            nn.Linear(d_model * 2, d_model * 2),
-            nn.ReLU(),
-            nn.Linear(d_model * 2, d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, label_dim)
-        )
+        if not use_new_head_arch:
+            self.head = nn.Sequential(
+                nn.Linear(d_model * 2, d_model * 2),
+                nn.ReLU(),
+                nn.Linear(d_model * 2, d_model),
+                nn.ReLU(),
+                nn.Linear(d_model, label_dim)
+            )
+        else:
+            assert num_head_layers >= 3
+            head_layers = block(d_model * 2, d_model_head, dropout)
+            for _ in range(num_head_layers - 3):
+                head_layers += block(d_model_head, d_model_head, dropout)
+            head_layers += block(d_model_head, d_model, dropout)
+            head_layers += [nn.Linear(d_model, label_dim)]
+            self.head = nn.Sequential(*head_layers)
+        print()
+        print("****** Creating Transformer Policy ******")
+        print("Head:")
+        print(self.head)
+        print("****** End Transformer Policy ******")
+        print()
 
     def forward(self, context, current, padding_mask=None):
         ctx_emb = self.ctx_norm(self.context_proj(context))
@@ -333,6 +359,9 @@ def load_robot_policy(save_path, device="cpu"):
         'label_means': np.zeros((save_dict['label_dim'],)),
         'label_stds': np.ones((save_dict['label_dim'],)),
         'train_expert': False,
+        'use_new_head_arch': False,
+        'num_head_layers': 2, # intentionally wrong
+        'd_model_head': 1024,
     } | save_dict
     model = RobotTransformerPolicy(
         save_dict['context_dim'],
@@ -341,6 +370,9 @@ def load_robot_policy(save_path, device="cpu"):
         num_layers=save_dict['num_layers'],
         d_model=save_dict['d_model'],
         dropout=save_dict['dropout'],
+        use_new_head_arch=save_dict['use_new_head_arch'],
+        num_head_layers=save_dict['num_head_layers'],
+        d_model_head=save_dict['d_model_head'],
     )
     model.load_state_dict(torch.load(save_path, map_location=device))
     model.to(device)
@@ -366,6 +398,11 @@ def main():
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     parser.add_argument("--train_expert", action="store_true", default=False, help="Whether we're training an expert or a residual.")
+
+    # Head architecture
+    parser.add_argument("--use_new_head_arch", action="store_true", default=False, help="Whether we're using LayerNorm + SiLU + Dropout.")
+    parser.add_argument("--num_head_layers", type=int, default=3, help="Number of Linear layers in the head.")
+    parser.add_argument("--d_model_head", type=int, default=1024, help="Size of each Linear layer in the head.")
 
     # All the bounds
     parser.add_argument("--receptive_xlow", type=float, default=0.3, help="Lower bound of receptive x position.")
@@ -481,6 +518,11 @@ def main():
         'warm_start': args.warm_start,
         'train_percent': args.train_percent,
         'train_expert': args.train_expert,
+
+        'use_new_head_arch': args.use_new_head_arch,
+        'num_head_layers': args.num_head_layers,
+        'd_model_head': args.d_model_head,
+
         'receptive_low': RECEPTIVE_LOW,
         'receptive_high': RECEPTIVE_HIGH,
         'insertive_low': INSERTIVE_LOW,
@@ -539,7 +581,12 @@ def main():
         # In a real scenario, you might want a Stratified Split here
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = RobotTransformerPolicy(CONTEXT_DIM, CURRENT_DIM, LABEL_DIM, num_layers=NUM_LAYERS, d_model=D_MODEL, dropout=DROPOUT)
+    model = RobotTransformerPolicy(
+        CONTEXT_DIM, CURRENT_DIM, LABEL_DIM, num_layers=NUM_LAYERS, d_model=D_MODEL, dropout=DROPOUT,
+        use_new_head_arch=args.use_new_head_arch,
+        num_head_layers=args.num_head_layers,
+        d_model_head=args.d_model_head,
+    )
     model.to(device)
     if ENABLE_WANDB:
         wandb.watch(model)

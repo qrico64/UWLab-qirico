@@ -31,5 +31,5 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 100 \
   --num_evals 5000 \
-  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb7/expert-ds_random5-x_geq_045/300-ckpt.pt
+  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt
 '
