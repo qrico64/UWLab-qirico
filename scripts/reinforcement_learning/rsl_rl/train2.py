@@ -366,7 +366,7 @@ def main():
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     parser.add_argument("--train_expert", action="store_true", default=False, help="Whether we're training an expert or a residual.")
-    
+
     args = parser.parse_args()
 
     # Accessing the parameters
@@ -388,7 +388,8 @@ def main():
         assert args.train_mode in ["autoregressive"]
 
     if ENABLE_WANDB:
-        wandb.init(project="robot-transformer-bc-deterministic-normalized-labels", config=vars(args))
+        WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not args.train_expert else "robot-mlp-bc"
+        wandb.init(project=WANDB_PROJECT, config=vars(args))
     
     DATASET_PATH = args.dataset_path
 
@@ -399,7 +400,7 @@ def main():
     except FileNotFoundError:
         print("Data file not found.")
         return
-    print("Loaded dataset.")
+    print(f"Loaded dataset from {DATASET_PATH}.")
 
     processed_data = []
     for traj in trajs:
@@ -412,6 +413,7 @@ def main():
             'label': traj['actions_expert'] - traj['actions'],
             'choosable': traj['obs']['policy2'].shape[0] > 6,
             'obs_receptive_noise': traj['obs_receptive_noise'],
+            '__log': traj,
             # 'choosable': not np.any(traj['rewards'] > 0.11),
         }
         if args.train_expert:
@@ -422,6 +424,7 @@ def main():
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
     assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
     assert processed_data[0]['label'].shape[-1] == LABEL_DIM
+    print(f"Kept {len(processed_data)}/{len(trajs)} ({len(processed_data)/len(trajs)}) trajectories.")
 
     # Current normalization
     all_currents = np.concatenate([traj['current'] for traj in processed_data], axis=0)
@@ -481,11 +484,16 @@ def main():
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
         pickle.dump(save_dict, fi)
 
+    # Visualization
     viz_path = os.path.join(save_path, "viz")
     os.makedirs(viz_path, exist_ok=True)
     all_labels_viz = np.concatenate([traj['label'] for traj in processed_data], axis=0)
     for i in range(LABEL_DIM):
         save_histogram(all_labels_viz[:, i], os.path.join(viz_path, f"label_{i}.png"))
+    all_receptive_locations = np.stack([traj['__log']['starting_position']['receptive_position'] for traj in processed_data], axis=0)[:, :2]
+    all_insertive_locations = np.stack([traj['__log']['starting_position']['insertive_position'] for traj in processed_data], axis=0)[:, :2]
+    cur_utils.save_point_distribution_image(all_receptive_locations, os.path.join(viz_path, f"loaded_receptive_locations.png"), fixed_bounds=True)
+    cur_utils.save_point_distribution_image(all_insertive_locations, os.path.join(viz_path, f"loaded_insertive_locations.png"), fixed_bounds=True)
 
     num_choosable = sum(1 for d in processed_data if d['choosable'])
     print(f"Total Trajectories: {len(processed_data)}")

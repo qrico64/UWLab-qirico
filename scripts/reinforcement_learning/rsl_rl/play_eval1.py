@@ -37,7 +37,7 @@ parser.add_argument("--real-time", action="store_true", default=False, help="Run
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
 parser.add_argument("--correction_model", type=str, default="N/A", help="Residual model .pt file.")
 parser.add_argument("--plot_residual", action="store_true", default=False, help="Open second screen & plot residual.")
-parser.add_argument("--video_path", type=str, default="./viz/test", help="Save location for videos.")
+parser.add_argument("--video_path", type=str, default=None, help="Save location for videos.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -375,7 +375,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.enable_cameras:
         PLOT_RESIDUAL = args_cli.plot_residual
         rec_video = np.zeros((env.num_envs, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
-        VIDEO_PATH = args_cli.video_path
+        VIDEO_PATH = args_cli.video_path or str(VIZ_DIRECTORY / "videos")
         os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
         NUM_VIDEOS = 6
@@ -425,6 +425,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     base_actions[need_residuals, :] = residual_actions
                 else:
                     base_actions[need_residuals, :] += residual_actions
+            if TRAIN_EXPERT:
+                base_actions[curstates == 0] *= 0
             
             # step
             next_obs, reward, dones, info = env.step(base_actions)
@@ -517,7 +519,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
                             cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", bins=10)
                             cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", bins=10)
-                        print()
+                            cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", bins=10)
+                            cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", bins=10)
+                            print()
 
                         rec_observations[i] *= 0
                         rec_actions[i] *= 0

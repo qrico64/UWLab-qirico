@@ -21,23 +21,27 @@ def format_array_3dec(x: np.ndarray) -> str:
     return str(x)
 
 
-def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
+def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200, fixed_bounds=False):
     """
     x: torch.Tensor, shape (N, 2) on CPU or GPU
     Saves a 2D histogram (density map) visualization to out_path.
     """
     if isinstance(x, torch.Tensor):
-        x = x.detach().cpu().float().numpy()
-    elif isinstance(x, list):
-        x = np.array(x)
+        x = x.detach()
+        if x.is_cuda:
+            x = x.cpu()
+        x = x.float().numpy()
 
     fig, ax = plt.subplots()
-    ax.hist2d(x[:, 0], x[:, 1], bins=bins)
+    if not fixed_bounds:
+        ax.hist2d(x[:, 0], x[:, 1], bins=bins)
+    else:
+        ax.hist2d(x[:, 0], x[:, 1], bins=bins, range=[[0.25, 0.6], [-0.15, 0.55]])
     ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("2D point distribution")
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi)
-    print(out_path)
     plt.close(fig)
+    print(f"Saved to: {out_path}")
 
 
 def save_histogram(x, filename, bins=100):
@@ -130,9 +134,9 @@ def main():
     lengths = [traj['actions'].shape[0] for traj in trajs]
     save_histogram(lengths, VIZ_DIR / "lengths.png", bins=40)
     receptive_starting_positions = np.stack([traj['starting_position']['receptive_position'][:2] for traj in trajs], axis=0)
-    save_point_distribution_image(receptive_starting_positions, VIZ_DIR / "receptive_starting_positions.png")
+    save_point_distribution_image(receptive_starting_positions, VIZ_DIR / "receptive_starting_positions.png", fixed_bounds=True)
     insertive_starting_positions = np.stack([traj['starting_position']['insertive_position'][:2] for traj in trajs], axis=0)
-    save_point_distribution_image(insertive_starting_positions, VIZ_DIR / "insertive_starting_positions.png")
+    save_point_distribution_image(insertive_starting_positions, VIZ_DIR / "insertive_starting_positions.png", fixed_bounds=True)
     rewards = np.concatenate([traj['rewards'] for traj in trajs], axis=0)
     rewards = np.maximum(rewards, np.quantile(rewards, 0.01))
     save_histogram(rewards, VIZ_DIR / "rewards.png", bins=100)
@@ -154,7 +158,7 @@ def main():
         action_low.append(round(np.quantile(actions_1dim, 0.1), 2))
         action_high.append(round(np.quantile(actions_1dim, 0.9), 2))
         print(f"Action dim {i}: 10% = {np.quantile(actions_1dim, 0.1)}, 90% = {np.quantile(actions_1dim, 0.9)}")
-        actions_1dim = np.clip(actions_1dim, np.quantile(actions_1dim, 0.01), np.quantile(actions_1dim, 0.99))
+        actions_1dim = np.clip(actions_1dim, np.quantile(actions_1dim, 0.002), np.quantile(actions_1dim, 0.998))
         save_histogram(actions_1dim, VIZ_DIR / f"action_dim_{i}.png", bins=100)
 
         sys_noise_1dim = sys_noise[:, i]

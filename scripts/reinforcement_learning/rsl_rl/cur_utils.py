@@ -100,7 +100,7 @@ def plot_success_grid(coords, success, bins=30, save_path=None, xrange=None, yra
     fig.colorbar(im, ax=ax, label="Success rate")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.set_title("Grid Success Rate")
+    ax.set_title(f"Grid Success Rate / {len(success)}")
 
     if save_path is not None:
         fig.savefig(save_path, dpi=200, bbox_inches="tight")
@@ -109,7 +109,7 @@ def plot_success_grid(coords, success, bins=30, save_path=None, xrange=None, yra
     plt.close(fig)
 
 
-def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
+def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200, fixed_bounds=False):
     """
     x: torch.Tensor, shape (N, 2) on CPU or GPU
     Saves a 2D histogram (density map) visualization to out_path.
@@ -121,7 +121,10 @@ def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
         x = x.float().numpy()
 
     fig, ax = plt.subplots()
-    ax.hist2d(x[:, 0], x[:, 1], bins=bins)
+    if not fixed_bounds:
+        ax.hist2d(x[:, 0], x[:, 1], bins=bins)
+    else:
+        ax.hist2d(x[:, 0], x[:, 1], bins=bins, range=[[0.25, 0.6], [-0.15, 0.55]])
     ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("2D point distribution")
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi)
