@@ -367,6 +367,16 @@ def main():
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     parser.add_argument("--train_expert", action="store_true", default=False, help="Whether we're training an expert or a residual.")
 
+    # All the bounds
+    parser.add_argument("--receptive_xlow", type=float, default=0.3, help="Lower bound of receptive x position.")
+    parser.add_argument("--receptive_xhigh", type=float, default=0.55, help="Upper bound of receptive x position.")
+    parser.add_argument("--receptive_ylow", type=float, default=-0.1, help="Lower bound of receptive y position.")
+    parser.add_argument("--receptive_yhigh", type=float, default=0.5, help="Upper bound of receptive y position.")
+    parser.add_argument("--insertive_xlow", type=float, default=0.3, help="Lower bound of insertive x position.")
+    parser.add_argument("--insertive_xhigh", type=float, default=0.55, help="Upper bound of insertive x position.")
+    parser.add_argument("--insertive_ylow", type=float, default=-0.1, help="Lower bound of insertive y position.")
+    parser.add_argument("--insertive_yhigh", type=float, default=0.5, help="Upper bound of insertive y position.")
+    
     args = parser.parse_args()
 
     # Accessing the parameters
@@ -383,6 +393,12 @@ def main():
     CONTEXT_DIM = 45 + 7
     CURRENT_DIM = 45
     LABEL_DIM = 7
+
+    # Bounds
+    RECEPTIVE_LOW = np.array([args.receptive_xlow, args.receptive_ylow])
+    RECEPTIVE_HIGH = np.array([args.receptive_xhigh, args.receptive_yhigh])
+    INSERTIVE_LOW = np.array([args.insertive_xlow, args.insertive_ylow])
+    INSERTIVE_HIGH = np.array([args.insertive_xhigh, args.insertive_yhigh])
 
     if args.train_expert:
         assert args.train_mode in ["autoregressive"]
@@ -404,6 +420,10 @@ def main():
 
     processed_data = []
     for traj in trajs:
+        if not ((traj['starting_position']['receptive_position'][:2] >= RECEPTIVE_LOW) & (traj['starting_position']['receptive_position'][:2] <= RECEPTIVE_HIGH) &
+            (traj['starting_position']['insertive_position'][:2] >= INSERTIVE_LOW) & (traj['starting_position']['insertive_position'][:2] <= INSERTIVE_HIGH)).all():
+            continue
+        
         if traj['rewards'].ndim == 1:
             traj['rewards'] = traj['rewards'][:, None]
         
@@ -461,6 +481,10 @@ def main():
         'warm_start': args.warm_start,
         'train_percent': args.train_percent,
         'train_expert': args.train_expert,
+        'receptive_low': RECEPTIVE_LOW,
+        'receptive_high': RECEPTIVE_HIGH,
+        'insertive_low': INSERTIVE_LOW,
+        'insertive_high': INSERTIVE_HIGH,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:

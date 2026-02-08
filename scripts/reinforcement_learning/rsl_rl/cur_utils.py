@@ -68,16 +68,18 @@ def predict_relative_pose(insertive_pose, receptive_pose):
     return torch.cat([p_rel, r_rel_aa], dim=-1) # (N, 6)
 
 
-def plot_success_grid(coords, success, bins=30, save_path=None, xrange=None, yrange=None):
+def plot_success_grid(coords, success, bins=10, save_path=None, fixed_bounds=False):
     coords = np.asarray(coords)
     success = np.asarray(success).astype(float)
 
     x, y = coords[:, 0], coords[:, 1]
 
-    if xrange is None:
-        xrange = (x.min(), x.max())
-    if yrange is None:
-        yrange = (y.min(), y.max())
+    xrange = (x.min(), x.max())
+    yrange = (y.min(), y.max())
+    if fixed_bounds:
+        xrange = (-0.15, 0.6)
+        yrange = (-0.15, 0.6)
+        bins = (15, 15)
 
     counts, xedges, yedges = np.histogram2d(
         x, y, bins=bins, range=[xrange, yrange]

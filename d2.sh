@@ -30,5 +30,6 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   env.scene.receptive_object=peghole \
   --headless \
   --num_envs 100 \
-  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/jan30/obsnoise_50percent_closeneighbors_currentnorm_contextnorm/300-ckpt.pt
+  --num_evals 5000 \
+  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb7/expert-ds_random5-x_geq_045/300-ckpt.pt
 '

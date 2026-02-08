@@ -38,6 +38,7 @@ parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps,
 parser.add_argument("--correction_model", type=str, default="N/A", help="Residual model .pt file.")
 parser.add_argument("--plot_residual", action="store_true", default=False, help="Open second screen & plot residual.")
 parser.add_argument("--video_path", type=str, default=None, help="Save location for videos.")
+parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -320,6 +321,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     CORRECTION_MODEL_FILE = os.path.abspath(args_cli.correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
+    VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
     correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
     label_stds = torch.tensor(correction_model_info["label_stds"], dtype=torch.float32, device=args_cli.device)
     label_means = torch.tensor(correction_model_info["label_means"], dtype=torch.float32, device=args_cli.device)
@@ -393,7 +395,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     count_completed = 0
     count_success_first_try = 0
     count_success_second_try = 0
-    while count_completed < 1000:
+    while count_completed < args_cli.num_evals:
         global_timestep += 1
         with torch.inference_mode():
             expert_actions = policy(obs)
@@ -517,10 +519,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             print(f"Success distribution size {len(result_success_distribution)}")
                             success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
                             success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
-                            cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", bins=10)
-                            cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", bins=10)
-                            cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", bins=10)
-                            cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", bins=10)
+                            cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", fixed_bounds=True)
+                            cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", fixed_bounds=True)
+                            cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", fixed_bounds=True)
+                            cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", fixed_bounds=True)
                             print()
 
                         rec_observations[i] *= 0
