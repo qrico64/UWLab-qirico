@@ -91,7 +91,7 @@ import isaaclab_tasks  # noqa: F401
 import uwlab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from uwlab_tasks.utils.hydra import hydra_task_config
-from train2 import RobotTransformerPolicy, load_robot_policy
+from train_lib import RobotTransformerPolicy, load_robot_policy
 import cur_utils
 
 # PLACEHOLDER: Extension template (do not remove this comment)

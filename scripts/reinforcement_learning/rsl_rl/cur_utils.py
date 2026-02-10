@@ -132,3 +132,31 @@ def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200, fix
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     print(f"Saved to: {out_path}")
+
+
+def save_histogram(x, filename, bins=100):
+    # convert to numpy
+    if hasattr(x, "detach"):  # torch tensor
+        x = x.detach().cpu().numpy()
+    else:
+        x = np.asarray(x)
+
+    x = x.reshape(-1)
+
+    plt.figure()
+    plt.hist(x, bins=bins)
+    plt.tight_layout()
+    plt.savefig(filename)
+    print(filename)
+    plt.close()
+
+
+def model_has_nan_or_inf(model):
+    for name, param in model.named_parameters():
+        if param is None:
+            continue
+        if not torch.isfinite(param).all():
+            print(f"Non-finite values in parameter: {name}")
+            return True
+    return False
+
