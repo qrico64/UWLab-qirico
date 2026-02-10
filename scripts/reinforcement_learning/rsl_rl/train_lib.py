@@ -99,34 +99,89 @@ class RobotTransformerPolicy(nn.Module):
         return self.head(combined)
 
 
+class ProcessedRobotTransformerPolicy(nn.Module):
+    def __init__(self, save_path: str, device: str = "cpu"):
+        super().__init__()
+        self.device = torch.device(device)
+
+        # load info
+        info_path = os.path.join(os.path.dirname(save_path), "info.pkl")
+        with open(info_path, "rb") as fi:
+            save_dict = pickle.load(fi)
+
+        # same default/override behavior as your loader
+        save_dict = {
+            "current_means": np.zeros((save_dict["current_dim"],)),
+            "current_stds": np.ones((save_dict["current_dim"],)),
+            "context_means": np.zeros((save_dict["context_dim"],)),
+            "context_stds": np.ones((save_dict["context_dim"],)),
+            "label_means": np.zeros((save_dict["label_dim"],)),
+            "label_stds": np.ones((save_dict["label_dim"],)),
+            "train_expert": False,
+            "use_new_head_arch": False,
+            "num_head_layers": 2,
+            "d_model_head": 1024,
+        } | save_dict
+        self.save_dict = save_dict
+
+        # build model
+        self.model = RobotTransformerPolicy(
+            save_dict["context_dim"],
+            save_dict["current_dim"],
+            save_dict["label_dim"],
+            num_layers=save_dict["num_layers"],
+            d_model=save_dict["d_model"],
+            dropout=save_dict["dropout"],
+            use_new_head_arch=save_dict["use_new_head_arch"],
+            num_head_layers=save_dict["num_head_layers"],
+            d_model_head=save_dict["d_model_head"],
+        )
+
+        # load weights
+        state = torch.load(save_path, map_location=self.device)
+        self.model.load_state_dict(state)
+        self.model.to(self.device)
+
+        # register normalization tensors using save_dict names
+        def reg(name, arr, shape):
+            t = torch.as_tensor(arr, device=self.device, dtype=torch.float32).view(*shape)
+            self.register_buffer(name, t)
+
+        reg("context_means", save_dict["context_means"], (1, 1, -1))
+        reg("context_stds",  save_dict["context_stds"],  (1, 1, -1))
+        reg("current_means", save_dict["current_means"], (1, -1))
+        reg("current_stds",  save_dict["current_stds"],  (1, -1))
+        reg("label_means",   save_dict["label_means"],   (1, -1))
+        reg("label_stds",    save_dict["label_stds"],    (1, -1))
+
+        print()
+        print(f"{save_path}")
+        print(f"context_means: {self.context_means}")
+        print(f"context_stds: {self.context_stds}")
+        print(f"current_means: {self.current_means}")
+        print(f"current_stds: {self.current_stds}")
+        print(f"label_means: {self.label_means}")
+        print(f"label_stds: {self.label_stds}")
+        print()
+
+        self.to(self.device).eval()
+
+    @torch.no_grad()
+    def forward(self, context, current, padding_mask=None):
+        context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
+        current = torch.as_tensor(current, device=self.device, dtype=torch.float32)
+
+        eps = 1e-8
+        context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
+        current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
+
+        out_n = self.model(context_n, current_n, padding_mask=padding_mask)
+        out = out_n * self.label_stds + self.label_means
+        return out
+
+
 def load_robot_policy(save_path, device="cpu"):
-    with open(os.path.join(os.path.dirname(save_path), "info.pkl"), "rb") as fi:
-        save_dict = pickle.load(fi)
-    save_dict = {
-        'current_means': np.zeros((save_dict['current_dim'],)),
-        'current_stds': np.ones((save_dict['current_dim'],)),
-        'context_means': np.zeros((save_dict['context_dim'],)),
-        'context_stds': np.ones((save_dict['context_dim'],)),
-        'label_means': np.zeros((save_dict['label_dim'],)),
-        'label_stds': np.ones((save_dict['label_dim'],)),
-        'train_expert': False,
-        'use_new_head_arch': False,
-        'num_head_layers': 2, # intentionally wrong
-        'd_model_head': 1024,
-    } | save_dict
-    model = RobotTransformerPolicy(
-        save_dict['context_dim'],
-        save_dict['current_dim'],
-        save_dict['label_dim'],
-        num_layers=save_dict['num_layers'],
-        d_model=save_dict['d_model'],
-        dropout=save_dict['dropout'],
-        use_new_head_arch=save_dict['use_new_head_arch'],
-        num_head_layers=save_dict['num_head_layers'],
-        d_model_head=save_dict['d_model_head'],
-    )
-    model.load_state_dict(torch.load(save_path, map_location=device))
-    model.to(device)
+    model = ProcessedRobotTransformerPolicy(save_path, device=device)
     model.eval()
-    return model, save_dict
+    return model, model.save_dict
 
