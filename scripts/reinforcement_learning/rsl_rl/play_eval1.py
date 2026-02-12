@@ -198,18 +198,6 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
 
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
-    # from source.uwlab_tasks.uwlab_tasks.manager_based.manipulation.reset_states.config.ur5e_robotiq_2f85.rl_state_cfg import Ur5eRobotiq2f85RelCartesianOSCEvalCfg as ClassA
-    # from uwlab_tasks.manager_based.manipulation.reset_states.config.ur5e_robotiq_2f85.rl_state_cfg import Ur5eRobotiq2f85RelCartesianOSCEvalCfg as ClassB
-    # a = ClassA()
-    # b = ClassB()
-    # print(ClassA.__module__)
-    # print(ClassB.__module__)
-    # import uwlab_tasks
-    # import source.uwlab_tasks
-    # import source.uwlab_tasks.uwlab_tasks
-    # print(uwlab_tasks.__file__)
-    # print(source.uwlab_tasks.__file__)
-    # print(source.uwlab_tasks.uwlab_tasks.__file__)
     """Play with RSL-RL agent."""
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
@@ -305,7 +293,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # Expert policy as in Omnireset.
     policy = runner.get_inference_policy(device=env.unwrapped.device)
-    policy_nn = getattr(runner.alg, "policy", runner.alg.actor_critic)
+    policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
     # Rico: Instantiate base policy!!
     if args_cli.base_policy is not None:
@@ -370,9 +358,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
         NUM_VIDEOS = 6
         VIDEO_FPS = 5
-        count_success_first_try_video = 0
-        count_success_second_try_video = 0
-        count_failed_video = 0
     
     starting_positions = get_positions(env.env.env)
 
@@ -380,10 +365,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     SUCCESS_THRESHOLD = 0.11
     global_timestep = 0
-    count_completed = 0
-    count_success_first_try = 0
-    count_success_second_try = 0
-    while count_completed < args_cli.num_evals:
+    count_success = torch.zeros(N_DIM + 1, dtype=torch.int64, device='cpu')
+    while count_success.sum() < args_cli.num_evals:
         global_timestep += 1
         with torch.inference_mode():
             expert_actions = policy(obs)
@@ -453,79 +436,60 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
             # handle dones
             policy_nn.reset(dones)
-            if dones.sum() > 0:
-                for i in range(env.num_envs):
-                    if not dones[i]:
-                        continue
-                    if curstates[i] > 0 or successes[i, curstates[i]]:
-                        count_completed += 1
-                        count_success_first_try += curstates[i] == 0 and successes[i, curstates[i]]
-                        count_success_second_try += curstates[i] == 1 and successes[i, curstates[i]]
-                        if curstates[i] == 1 and successes[i, curstates[i]]:
-                            result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), True])
-                        elif not successes[i, curstates[i]]:
-                            result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), False])
-                        # print(f"Environment {i} has finished with {['fail', 'success'][successes[i]]} at stage {curstates[i]}")
+            for i in torch.nonzero(dones).squeeze(-1):
+                if curstates[i] > 0 or successes[i, curstates[i]]:
+                    curi = curstates[i].cpu() + 1 if successes[i, curstates[i]] else 0
+                    count_success[curi] += 1
+                    if curi == 2 or curi == 0:
+                        result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), curi == 2])
 
-                        if args_cli.enable_cameras:
-                            if curstates[i] == 0 and successes[i, curstates[i]]:
-                                # first try success
-                                if count_success_first_try_video < NUM_VIDEOS:
-                                    videopath = videopath_generator(0, count_success_first_try_video)
-                                    maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
-                                    maxt = min(maxt + 1, timesteps[i, curstates[i]])
-                                    print(f"maxt = {maxt}")
-                                    frames = rec_video[i, curstates[i], :maxt]
-                                    save_video(frames, videopath, fps=VIDEO_FPS)
-                                    count_success_first_try_video += 1
-                            elif curstates[i] == 1 and successes[i, curstates[i]]:
-                                # second try success
-                                if count_success_second_try_video < NUM_VIDEOS:
-                                    videopath = videopath_generator(1, count_success_second_try_video)
-                                    maxt = (rec_rewards[i, 1] < SUCCESS_THRESHOLD).sum()
-                                    maxt = min(maxt + 1, timesteps[i, 1])
-                                    print(f"maxt = {maxt}")
-                                    frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :maxt]], axis=0)
-                                    save_video(frames, videopath, fps=VIDEO_FPS)
-                                    count_success_second_try_video += 1
-                            else:
-                                # failed
-                                if count_failed_video < NUM_VIDEOS:
-                                    videopath = videopath_generator(-1, count_failed_video)
-                                    frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
-                                    save_video(frames, videopath, fps=VIDEO_FPS)
-                                    count_failed_video += 1
+                    if args_cli.enable_cameras and count_success[curi] <= NUM_VIDEOS:
+                        videopath = videopath_generator(curi, count_success[curi].item())
+                        maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
+                        maxt = min(maxt + 1, timesteps[i, curstates[i]])
+                        if TRAIN_EXPERT:
+                            # visualize expert trajectory
+                            frames = rec_video[i, curstates[i], :maxt]
+                        elif curi == 1:
+                            # first try success
+                            frames = rec_video[i, curstates[i], :maxt]
+                        elif curi == 2:
+                            # second try success
+                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :maxt]], axis=0)
+                        else:
+                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
+                        save_video(frames, videopath, fps=VIDEO_FPS)
 
-                        if count_completed % 20 == 0:
-                            print(f"First try success rate: {count_success_first_try / count_completed}; Second try success rate: {count_success_second_try / (count_completed - count_success_first_try)}")
-                            print(f"{count_completed} {count_success_first_try} {count_success_second_try}")
-                        
-                        if count_completed % 100 == 0 and len(result_success_distribution) > 0:
-                            print(f"Success distribution size {len(result_success_distribution)}")
-                            success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
-                            success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
-                            cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", fixed_bounds=True)
-                            cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", fixed_bounds=True)
-                            cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", fixed_bounds=True)
-                            cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", fixed_bounds=True)
-                            print()
+                    if count_success.sum() % 20 == 0:
+                        print(f"First try success rate: {count_success[1] / count_success.sum()}; Second try success rate: {count_success[2] / (count_success.sum() - count_success[1])}")
+                        print(f"{count_success.sum()} {count_success[1]} {count_success[2]}")
+                    
+                    if count_success.sum() % 100 == 0 and len(result_success_distribution) > 0:
+                        print(f"Success distribution size {len(result_success_distribution)}")
+                        success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
+                        success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
+                        cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", fixed_bounds=True)
+                        cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", fixed_bounds=True)
+                        cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", fixed_bounds=True)
+                        cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", fixed_bounds=True)
+                        print()
 
-                        rec_observations[i] *= 0
-                        rec_actions[i] *= 0
-                        rec_rewards[i] *= 0
-                        timesteps[i] *= 0
-                        successes[i] = False
-                        curstates[i] *= 0
-                        sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
-                        obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
-                        obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
-                        starting_positions[i] = get_positions(env.env.env)[i]
-                        trajectory_start_position[i] = get_starting_position(env)[i]
-                    else:
-                        curstates[i] += 1
-                        set_positions_completely(env.env.env, starting_positions[i], i)
+                    rec_observations[i] *= 0
+                    rec_actions[i] *= 0
+                    rec_rewards[i] *= 0
+                    timesteps[i] *= 0
+                    successes[i] = False
+                    curstates[i] *= 0
+                    sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
+                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
+                    starting_positions[i] = get_positions(env.env.env)[i]
+                    trajectory_start_position[i] = get_starting_position(env)[i]
+                else:
+                    curstates[i] += 1
+                    set_positions_completely(env.env.env, starting_positions[i], i)
         
-        if args_cli.enable_cameras and count_success_first_try_video >= NUM_VIDEOS and count_success_second_try_video >= NUM_VIDEOS and count_failed_video >= NUM_VIDEOS:
+        if args_cli.enable_cameras and torch.all(count_success >= NUM_VIDEOS):
             break
     
     # close the simulator
