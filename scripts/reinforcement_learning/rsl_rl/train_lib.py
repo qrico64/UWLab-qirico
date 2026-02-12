@@ -155,7 +155,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         reg("label_stds",    save_dict["label_stds"],    (1, -1))
 
         print()
-        print(f"{save_path}")
+        print(f"Loaded {save_path} !!!")
         print(f"context_means: {self.context_means}")
         print(f"context_stds: {self.context_stds}")
         print(f"current_means: {self.current_means}")

@@ -39,6 +39,7 @@ parser.add_argument("--correction_model", type=str, default="N/A", help="Residua
 parser.add_argument("--plot_residual", action="store_true", default=False, help="Open second screen & plot residual.")
 parser.add_argument("--video_path", type=str, default=None, help="Save location for videos.")
 parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
+parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -302,17 +303,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     runner.load(resume_path)
 
-    # obtain the trained policy for inference
+    # Expert policy as in Omnireset.
     policy = runner.get_inference_policy(device=env.unwrapped.device)
-
-    # extract the neural network module
-    # we do this in a try-except to maintain backwards compatibility.
-    try:
-        # version 2.3 onwards
-        policy_nn = runner.alg.policy
-    except AttributeError:
-        # version 2.2 and below
-        policy_nn = runner.alg.actor_critic
+    policy_nn = getattr(runner.alg, "policy", runner.alg.actor_critic)
+    
+    # Rico: Instantiate base policy!!
+    if args_cli.base_policy is not None:
+        base_policy, base_policy_info = load_robot_policy(args_cli.base_policy, device=args_cli.device)
+        assert base_policy_info['train_expert']
+        policy = lambda temp_currents: base_policy(
+            torch.zeros(len(temp_currents), args_cli.horizon, base_policy_info['context_dim'], device=args_cli.device),
+            temp_currents['policy2'],
+            torch.zeros(len(temp_currents), args_cli.horizon, dtype=torch.bool, device=args_cli.device),
+        )
     
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
     A_DIM = env.action_space.shape[-1]
