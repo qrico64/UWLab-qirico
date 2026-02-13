@@ -160,3 +160,20 @@ def model_has_nan_or_inf(model):
             return True
     return False
 
+
+def zfill(x: torch.Tensor, horizon: int, dim: int = 1):
+    cur = x.size(dim)
+    if cur >= horizon:
+        return x
+
+    pad_shape = list(x.shape)
+    pad_shape[dim] = horizon - cur
+
+    pad = torch.zeros(
+        *pad_shape,
+        dtype=x.dtype,
+        device=x.device
+    )
+
+    return torch.cat([x, pad], dim=dim)
+

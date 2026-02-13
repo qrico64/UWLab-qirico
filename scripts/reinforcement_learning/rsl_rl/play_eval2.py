@@ -40,6 +40,7 @@ parser.add_argument("--plot_residual", action="store_true", default=False, help=
 parser.add_argument("--video_path", type=str, default=None, help="Save location for videos.")
 parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
 parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
+parser.add_argument("--finetune_mode", type=str, default="residual", help="Options: residual, expert.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -68,6 +69,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 import pathlib
+import wandb
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -92,8 +94,11 @@ import isaaclab_tasks  # noqa: F401
 import uwlab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from uwlab_tasks.utils.hydra import hydra_task_config
-from train_lib import RobotTransformerPolicy, load_robot_policy
+import train_lib
 import cur_utils
+import train_lora_lib
+
+ENABLE_WANDB = True
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -196,6 +201,15 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
     )
     return frame
 
+def save_model_at_checkpoint(model: train_lib.RobotTransformerPolicy, save_path: str, epoch: int, finetuning_mode = None):
+    if finetuning_mode == "lora":
+        model = train_lora_lib.convert_lora_model_to_plain_robot_policy(model)
+    csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
+    torch.save(model.state_dict(), csp)
+    print(f"Model at epoch {epoch} saved to {csp}")
+
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
@@ -292,19 +306,29 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     runner.load(resume_path)
 
     # Expert policy as in Omnireset.
-    policy = runner.get_inference_policy(device=env.unwrapped.device)
-    policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
+    expert_policy = runner.get_inference_policy(device=env.unwrapped.device)
+    expert_policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
     # Rico: Instantiate base policy!!
-    if args_cli.base_policy is not None:
-        base_policy, base_policy_info = load_robot_policy(args_cli.base_policy, device=args_cli.device)
-        assert base_policy_info['train_expert']
-        policy = lambda temp_currents: base_policy(
-            torch.zeros(len(temp_currents), args_cli.horizon, base_policy_info['context_dim'], device=args_cli.device),
-            temp_currents['policy2'],
-            torch.zeros(len(temp_currents), args_cli.horizon, dtype=torch.bool, device=args_cli.device),
-        )
+    assert args_cli.base_policy is not None
+    base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device)
+    assert base_policy_info['train_expert']
+    base_policy = base_policy.model
+    report = train_lora_lib.verify_lora_conversion_from_model(base_policy)
+    print(report)
+
+    base_policy.head = train_lora_lib.apply_lora(base_policy.head, r=8, alpha=16, lora_dropout=0, init_std=0.01)
+    base_policy = train_lora_lib.freeze_all_but_lora(base_policy)
+
+    print("****** Base Policy Architecture ******")
+    print(base_policy)
+    print("****** End Base Policy Architecture ******")
+
+    for k in ["current_means", "current_stds", "context_means", "context_stds", "label_means", "label_stds"]:
+        base_policy_info[k + "_tensor"] = torch.tensor(base_policy_info[k], dtype=torch.float32, device=args_cli.device)
     
+    # Correction model stuff
+
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
     A_DIM = env.action_space.shape[-1]
     RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
@@ -313,7 +337,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
+    correction_model, correction_model_info = train_lib.load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
     
     assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
@@ -321,7 +345,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     TRAIN_EXPERT = correction_model_info['train_expert']
 
-    N_DIM = 2
+    N_DIM = 1
     timesteps = torch.zeros(env.num_envs, N_DIM, dtype=torch.int64, device=args_cli.device)
     successes = torch.zeros(env.num_envs, N_DIM, dtype=torch.bool, device=args_cli.device)
     rec_observations = torch.zeros(env.num_envs, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=args_cli.device)
@@ -329,6 +353,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
     curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
     trajectory_start_position = get_starting_position(env)
+    rec_expert_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
 
     result_success_distribution = []
     
@@ -361,118 +386,85 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     
     starting_positions = get_positions(env.env.env)
 
+    # TRAINING CONFIG
+
+    replay_buffer = {
+        'index': 0,
+        'current': torch.zeros(args_cli.num_evals * T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device='cpu'),
+        'label': torch.zeros(args_cli.num_evals * T_DIM, A_DIM, dtype=torch.float32, device='cpu'),
+    }
+    BATCH_SIZE = 64
+    optimizer = torch.optim.AdamW(base_policy.parameters(), lr=3e-4, weight_decay=1e-5)
+    SAVE_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "finetuning"
+    SAVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+
+    last_ckpt_epoch = -1e4
+    num_epochs_so_far = 0
+
+    UTD_RATIO = 1
+
     # reset environment
 
     SUCCESS_THRESHOLD = 0.11
     global_timestep = 0
+
     count_success = torch.zeros(N_DIM + 1, dtype=torch.int64, device='cpu')
-    while count_success.sum() < args_cli.num_evals:
-        global_timestep += 1
-        with torch.inference_mode():
-            expert_actions = policy(obs)
+    success_rate_curve_xs = []
+    success_rate_curve_ys = []
 
-            obs_tweaked = obs.clone()
-            receptive_noise = obs_receptive_noise
-            insertive_noise = obs_insertive_noise
-            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(env.num_envs, 5, 6) + receptive_noise.unsqueeze(1)
-            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(env.num_envs, 5, 6) + insertive_noise.unsqueeze(1)
-            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(env.num_envs, 30)
-            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(env.num_envs, 30)
+    # Initialize wandb
+    if ENABLE_WANDB:
+        WANDB_PROJECT = "robot-transformer-bc-finetuning-eval"
+        wandb.init(project=WANDB_PROJECT, config=vars(args_cli))
+        wandb.watch(base_policy)
 
-            base_actions_raw = policy(obs_tweaked)
+    try:
+        while count_success.sum() < args_cli.num_evals:
+            global_timestep += 1
+            with torch.inference_mode():
+                expert_action = expert_policy(obs)
 
-            base_actions_raw += sys_noises
-            base_actions = base_actions_raw.clone()
-
-            need_residuals = curstates > 0
-            need_residuals_count = need_residuals.sum()
-            if need_residuals_count > 0:
-                contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
-                currents = obs['policy2'][need_residuals].clone()
-                padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
-                residual_actions = correction_model(contexts, currents, padding_mask)
-                if TRAIN_EXPERT:
-                    base_actions[need_residuals, :] = residual_actions
-                else:
-                    base_actions[need_residuals, :] += residual_actions
-            if TRAIN_EXPERT:
-                base_actions[curstates == 0] *= 0
-            
-            # step
-            next_obs, reward, dones, info = env.step(base_actions)
-
-            # handle non-dones
-            indices = torch.arange(env.num_envs, device=args_cli.device)
-            cur_timesteps = timesteps[indices, curstates]
-            rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
-            rec_actions[indices, curstates, cur_timesteps, :] = base_actions
-            rec_rewards[indices, curstates, cur_timesteps] = reward
-            successes[indices, curstates] |= reward >= SUCCESS_THRESHOLD
-
-            if args_cli.enable_cameras:
-                frames = obs['rgb'].cpu().detach().numpy().transpose(0, 2, 3, 1)
-                if frames.max() <= 1.0 + 1e-4:
-                    frames = (frames * 255).astype(np.uint8)
+                fake_context = torch.zeros(env.num_envs, args_cli.horizon, base_policy_info['context_dim'], dtype=torch.float32, device=args_cli.device)
+                fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
+                currents = (obs['policy2'] - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
+                base_actions = base_policy(fake_context, currents, fake_padding_mask)
+                base_actions = base_actions * base_policy_info['label_stds_tensor'] + base_policy_info['label_means_tensor']
                 
-                for i in range(env.num_envs):
-                    assert frames[i].shape == (*IMAGE_SIZE, 3)
-                    if PLOT_RESIDUAL:
-                        display_action = expert_actions[i] - base_actions_raw[i]
-                        display_action2 = base_actions[i] - base_actions_raw[i]
-                        display_action_str = '[' + ', '.join([f"{x:.3f}" for x in display_action.tolist()]) + ']'
-                        display_action2_str = '[' + ', '.join([f"{x:.3f}" for x in display_action2.tolist()]) + ']'
-                    else:
-                        display_action = display_action2 = None
-                        display_action_str = display_action2_str = "None"
-                    caption = f"t={timesteps[i].tolist()} r={reward[i]:.5f} done={dones[i]}"
-                    if PLOT_RESIDUAL:
-                        caption += f" residual-action={display_action_str}"
-                    caption += f"\npred-action={display_action2_str}"
-                    final_screen = render_frame(frames[i], caption, display_action=display_action, display_action2=display_action2)
-                    rec_video[i, curstates[i], timesteps[i, curstates[i]]] = final_screen
-            
-            timesteps[indices, curstates] += 1
-            obs = next_obs
+                # step
+                next_obs, reward, dones, info = env.step(base_actions)
 
-            # handle dones
-            policy_nn.reset(dones)
-            for i in torch.nonzero(dones).squeeze(-1):
-                if curstates[i] > 0 or successes[i, curstates[i]]:
-                    curi = curstates[i].cpu() + 1 if successes[i, curstates[i]] else 0
-                    count_success[curi] += 1
-                    if curi == 2 or curi == 0:
-                        result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), curi == 2])
+                # handle non-dones
+                indices = torch.arange(env.num_envs, device=args_cli.device)
+                cur_timesteps = timesteps[indices, curstates]
+                rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
+                rec_actions[indices, curstates, cur_timesteps, :] = base_actions
+                rec_rewards[indices, curstates, cur_timesteps] = reward
+                rec_expert_actions[indices, curstates, cur_timesteps] = expert_action
+                successes[indices, curstates] |= reward >= SUCCESS_THRESHOLD
+                
+                timesteps[indices, curstates] += 1
+                obs = next_obs
 
-                    if args_cli.enable_cameras and count_success[curi] <= NUM_VIDEOS:
-                        videopath = videopath_generator(curi, count_success[curi].item())
-                        maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
-                        maxt = min(maxt + 1, timesteps[i, curstates[i]])
-                        if TRAIN_EXPERT:
-                            # visualize expert trajectory
-                            frames = rec_video[i, curstates[i], :maxt]
-                        elif curi == 1:
-                            # first try success
-                            frames = rec_video[i, curstates[i], :maxt]
-                        elif curi == 2:
-                            # second try success
-                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :maxt]], axis=0)
-                        else:
-                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
-                        save_video(frames, videopath, fps=VIDEO_FPS)
+                # handle dones
+                for i in torch.nonzero(dones).squeeze(-1):
+                    count_success[successes[i, 0].long()] += 1
 
-                    if count_success.sum() % 20 == 0:
-                        print(f"First try success rate: {count_success[1] / count_success.sum()}; Second try success rate: {count_success[2] / (count_success.sum() - count_success[1])}")
-                        print(f"{count_success.sum()} {count_success[1]} {count_success[2]}")
-                    
-                    if count_success.sum() % 100 == 0 and len(result_success_distribution) > 0:
-                        print(f"Success distribution size {len(result_success_distribution)}")
-                        success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
-                        success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
-                        cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", fixed_bounds=True)
-                        cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", fixed_bounds=True)
-                        cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", fixed_bounds=True)
-                        cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", fixed_bounds=True)
-                        print()
+                    T = min(timesteps[i, 0], (rec_rewards[i, 0, :timesteps[i, 0]] < SUCCESS_THRESHOLD).sum() + 1)
+                    context = torch.cat([rec_observations[i, 0, :T], rec_actions[i, 0, :T]], axis=1)
+                    current = rec_observations[i, 0, :T]
+                    padding_mask = torch.zeros(T, T, dtype=torch.bool, device=args_cli.device)
+                    residual_actions = correction_model(
+                        context.repeat(T, 1, 1),
+                        current,
+                        padding_mask,
+                    )
+
+                    stored_currents = (current - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
+                    labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else (rec_actions[i, 0, :T] + residual_actions)
+                    stored_labels = (labels - base_policy_info['label_means_tensor']) / base_policy_info['label_stds_tensor']
+                    replay_buffer['current'][replay_buffer['index']:replay_buffer['index'] + T] = stored_currents.cpu()
+                    replay_buffer['label'][replay_buffer['index']:replay_buffer['index'] + T] = stored_labels.cpu()
+                    replay_buffer['index'] += T.item()
 
                     rec_observations[i] *= 0
                     rec_actions[i] *= 0
@@ -485,16 +477,69 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
                     starting_positions[i] = get_positions(env.env.env)[i]
                     trajectory_start_position[i] = get_starting_position(env)[i]
-                else:
-                    curstates[i] += 1
-                    set_positions_completely(env.env.env, starting_positions[i], i)
-        
-        if args_cli.enable_cameras and torch.all(count_success >= NUM_VIDEOS):
-            break
-    
-    # close the simulator
-    env.close()
-    print(f"Loading model at {CORRECTION_MODEL_FILE}")
+                
+            if dones.sum() > 0:
+                assert replay_buffer['index'] > 0, f"replay_buffer['index'] = {replay_buffer['index']}"
+                current_step = replay_buffer['index']
+
+                success_rate_curve_xs.append(current_step)
+                success_rate_curve_ys.append(count_success[1].item() / count_success.sum().item())
+                print(f"Success count: {count_success.tolist()} Success rate: {success_rate_curve_ys[-1]:.3f} at {success_rate_curve_xs[-1]} evaluations")
+
+                if ENABLE_WANDB:
+                    wandb.log({
+                        "success_rate": success_rate_curve_ys[-1],
+                        "num_success": count_success[1].item(),
+                        "num_total": count_success.sum().item(),
+                        "eval_step": current_step,
+                    })
+
+                batch_size = min(BATCH_SIZE, replay_buffer['index'])
+                num_epochs = int(current_step * UTD_RATIO) - num_epochs_so_far
+
+                if num_epochs > 0:
+                    base_policy.train()
+                    train_loss = 0
+                    print(f"Training for {num_epochs} epochs with batch size {batch_size} on {replay_buffer['index']} samples in replay buffer.")
+                    for _ in range(num_epochs):
+                        idxs = torch.randint(0, replay_buffer['index'], size=(batch_size,), device=replay_buffer['current'].device)
+                        batch_current = replay_buffer['current'][idxs].to(args_cli.device)
+                        batch_label = replay_buffer['label'][idxs].to(args_cli.device)
+                        fake_context = torch.zeros(batch_size, args_cli.horizon, RESIDUAL_CONTEXT_DIM, dtype=torch.float32, device=args_cli.device)
+                        fake_padding_mask = torch.zeros(batch_size, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
+
+                        optimizer.zero_grad()
+                        pred_actions = base_policy(fake_context, batch_current, fake_padding_mask)
+                        loss = torch.nn.functional.mse_loss(pred_actions, batch_label)
+                        loss.backward()
+                        optimizer.step()
+
+                        train_loss += loss.item()
+                    
+                    avg_train_loss = train_loss / num_epochs
+                    print(f"Step {replay_buffer['index']} - Train Loss: {avg_train_loss:.6f}")
+                    print()
+
+                    if ENABLE_WANDB:
+                        wandb.log({
+                            "train_loss": avg_train_loss,
+                            "step": replay_buffer['index'],
+                        })
+
+                    base_policy.eval()
+
+                    # if current_step - last_ckpt_epoch >= 600:
+                    #     save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_step, finetuning_mode="lora")
+                    #     last_ckpt_epoch = current_step
+                    
+                    num_epochs_so_far += num_epochs
+    finally:
+        # close the simulator
+        env.close()
+        print(f"Loading model at {CORRECTION_MODEL_FILE}")
+
+        if ENABLE_WANDB:
+            wandb.finish()
 
 
 if __name__ == "__main__":

@@ -42,6 +42,20 @@ class RobotTransformerPolicy(nn.Module):
             d_model_head=1024,
         ):
         super().__init__()
+
+        self.policy_cfg = dict(
+            context_dim=context_dim,
+            current_dim=current_dim,
+            label_dim=label_dim,
+            nhead=nhead,
+            num_layers=num_layers,
+            d_model=d_model,
+            dropout=dropout,
+            use_new_head_arch=use_new_head_arch,
+            num_head_layers=num_head_layers,
+            d_model_head=d_model_head,
+        )
+
         self.context_proj = nn.Linear(context_dim, d_model)
         self.ctx_norm = nn.LayerNorm(d_model)
         self.current_proj = nn.Linear(current_dim, d_model)
