@@ -31,7 +31,8 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 10 \
   --num_evals 10000 \
-  --finetune_mode residual \
+  --finetune_mode expert \
   --base_policy /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt \
-  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb12/obsnoise_0.01_randnoise_3.0_normboth_0.8dataset/300-ckpt.pt
+  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb12/thirdtry_obsnoise_0.01_randnoise_2.0_normboth_0.8dataset/300-ckpt.pt \
+  --save_path /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb12/finetune-expertbaseline-receptive_x_leq_035-expert \
 '

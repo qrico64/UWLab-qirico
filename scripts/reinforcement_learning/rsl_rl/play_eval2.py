@@ -41,6 +41,7 @@ parser.add_argument("--video_path", type=str, default=None, help="Save location 
 parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
 parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
 parser.add_argument("--finetune_mode", type=str, default="residual", help="Options: residual, expert.")
+parser.add_argument("--save_path", type=str, default=None, help="Save location for checkpoints.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -70,6 +71,7 @@ from PIL import Image, ImageDraw, ImageFont
 import cv2
 import pathlib
 import wandb
+import math
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -395,13 +397,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     }
     BATCH_SIZE = 64
     optimizer = torch.optim.AdamW(base_policy.parameters(), lr=3e-4, weight_decay=1e-5)
-    SAVE_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "finetuning"
-    SAVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
-    last_ckpt_epoch = -1e4
+    SAVE_DIRECTORY = args_cli.save_path
+    if SAVE_DIRECTORY is not None:
+        SAVE_DIRECTORY = pathlib.Path(SAVE_DIRECTORY)
+        SAVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+
     num_epochs_so_far = 0
+    num_trajs_so_far = 0
 
     UTD_RATIO = 1
+
+    LOG_INTERVAL = 20
+    SAVE_INTERVAL = lambda x: 0 if x < 20 else (5 * int(math.log10(x) - 1) + int(x / 10 ** int(math.log10(x)) / 2))
 
     # reset environment
 
@@ -409,8 +417,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     global_timestep = 0
 
     count_success = torch.zeros(N_DIM + 1, dtype=torch.int64, device='cpu')
-    success_rate_curve_xs = []
-    success_rate_curve_ys = []
 
     # Initialize wandb
     if ENABLE_WANDB:
@@ -446,6 +452,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 obs = next_obs
 
                 # handle dones
+                expert_policy_nn.reset(dones)
                 for i in torch.nonzero(dones).squeeze(-1):
                     count_success[successes[i, 0].long()] += 1
 
@@ -481,18 +488,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             if dones.sum() > 0:
                 assert replay_buffer['index'] > 0, f"replay_buffer['index'] = {replay_buffer['index']}"
                 current_step = replay_buffer['index']
+                current_traj = count_success.sum().item()
 
-                success_rate_curve_xs.append(current_step)
-                success_rate_curve_ys.append(count_success[1].item() / count_success.sum().item())
-                print(f"Success count: {count_success.tolist()} Success rate: {success_rate_curve_ys[-1]:.3f} at {success_rate_curve_xs[-1]} evaluations")
+                if current_traj // LOG_INTERVAL > num_trajs_so_far // LOG_INTERVAL:
+                    print(f"Success count: {count_success.tolist()} Success rate: {count_success[1].item() / count_success.sum().item():.3f} at {current_traj} evaluations")
 
                 if ENABLE_WANDB:
                     wandb.log({
-                        "success_rate": success_rate_curve_ys[-1],
+                        "success_rate": count_success[1].item() / count_success.sum().item(),
                         "num_success": count_success[1].item(),
                         "num_total": count_success.sum().item(),
                         "eval_step": current_step,
-                    })
+                    }, step=count_success.sum().item())
 
                 batch_size = min(BATCH_SIZE, replay_buffer['index'])
                 num_epochs = int(current_step * UTD_RATIO) - num_epochs_so_far
@@ -500,7 +507,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 if num_epochs > 0:
                     base_policy.train()
                     train_loss = 0
-                    print(f"Training for {num_epochs} epochs with batch size {batch_size} on {replay_buffer['index']} samples in replay buffer.")
                     for _ in range(num_epochs):
                         idxs = torch.randint(0, replay_buffer['index'], size=(batch_size,), device=replay_buffer['current'].device)
                         batch_current = replay_buffer['current'][idxs].to(args_cli.device)
@@ -517,22 +523,25 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         train_loss += loss.item()
                     
                     avg_train_loss = train_loss / num_epochs
-                    print(f"Step {replay_buffer['index']} - Train Loss: {avg_train_loss:.6f}")
-                    print()
+                    if current_traj // LOG_INTERVAL > num_trajs_so_far // LOG_INTERVAL:
+                        print(f"Trained for {num_epochs} epochs with batch size {batch_size} on {replay_buffer['index']} samples in replay buffer.")
+                        print(f"Step {replay_buffer['index']} - Train Loss: {avg_train_loss:.6f}")
+                        print()
 
                     if ENABLE_WANDB:
                         wandb.log({
                             "train_loss": avg_train_loss,
                             "step": replay_buffer['index'],
-                        })
+                        }, step=count_success.sum().item())
 
                     base_policy.eval()
 
-                    # if current_step - last_ckpt_epoch >= 600:
-                    #     save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_step, finetuning_mode="lora")
-                    #     last_ckpt_epoch = current_step
+                    if SAVE_DIRECTORY is not None and SAVE_INTERVAL(current_traj) > SAVE_INTERVAL(num_trajs_so_far):
+                        save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_traj, finetuning_mode="lora")
                     
                     num_epochs_so_far += num_epochs
+                
+                num_trajs_so_far = current_traj
     finally:
         # close the simulator
         env.close()
