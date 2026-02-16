@@ -68,6 +68,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 import pathlib
+import matplotlib.pyplot as plt
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -204,6 +205,7 @@ def evaluate_model(
     base_policy,
     correction_model,
     num_evals,
+    need_reset_envs=True,
     enable_cameras=False,
     IMAGE_SIZE=(400, 400),
     plot_residual=False,
@@ -227,9 +229,10 @@ def evaluate_model(
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
     A_DIM = env.action_space.shape[-1]
     RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
-    CORRECTION_MODEL_FILE = os.path.abspath(correction_model)
+    CORRECTION_MODEL_FILE = pathlib.Path(correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
-    VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
+    assert CORRECTION_MODEL_FILE.is_file()
+    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz")
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
     correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=device)
     
@@ -240,6 +243,7 @@ def evaluate_model(
     TRAIN_EXPERT = correction_model_info['train_expert']
 
     N_DIM = 2
+    completed_reset = torch.full((N,), not need_reset_envs, dtype=torch.bool, device=device)
     timesteps = torch.zeros(N, N_DIM, dtype=torch.int64, device=device)
     successes = torch.zeros(N, N_DIM, dtype=torch.bool, device=device)
     rec_observations = torch.zeros(N, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=device)
@@ -356,6 +360,21 @@ def evaluate_model(
             # handle dones
             policy_nn.reset(dones)
             for i in torch.nonzero(dones).squeeze(-1):
+                if not completed_reset[i]:
+                    completed_reset[i] = True
+                    rec_observations[i] *= 0
+                    rec_actions[i] *= 0
+                    rec_rewards[i] *= 0
+                    timesteps[i] *= 0
+                    successes[i] = False
+                    curstates[i] *= 0
+                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
+                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
+                    starting_positions[i] = get_positions(env.env.env)[i]
+                    trajectory_start_position[i] = get_starting_position(env)[i]
+                    continue
+                
                 if curstates[i] > 0 or successes[i, curstates[i]]:
                     curi = curstates[i].cpu() + 1 if successes[i, curstates[i]] else 0
                     count_success[curi] += 1
@@ -412,7 +431,7 @@ def evaluate_model(
             break
     
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
-    pass
+    return (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
 
 
 
@@ -515,19 +534,55 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     policy = runner.get_inference_policy(device=env.unwrapped.device)
     policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
-    evaluate_model(
-        env,
-        policy,
-        policy_nn,
-        base_policy=args_cli.base_policy,
-        correction_model=args_cli.correction_model,
-        num_evals=args_cli.num_evals,
-        enable_cameras=args_cli.enable_cameras,
-        plot_residual=args_cli.plot_residual,
-        video_path=args_cli.video_path,
-        horizon=args_cli.horizon,
-        device=agent_cfg.device,
-    )
+    correction_model_file = pathlib.Path(args_cli.correction_model)
+    if correction_model_file.is_file():
+        evaluate_model(
+            env,
+            policy,
+            policy_nn,
+            base_policy=args_cli.base_policy,
+            correction_model=args_cli.correction_model,
+            num_evals=args_cli.num_evals,
+            enable_cameras=args_cli.enable_cameras,
+            plot_residual=args_cli.plot_residual,
+            video_path=args_cli.video_path,
+            horizon=args_cli.horizon,
+            device=agent_cfg.device,
+            need_reset_envs=False,
+        )
+    elif correction_model_file.is_dir():
+        checkpoints = list(correction_model_file.glob("*.pt"))
+        checkpoints = [int(ckpt.name.replace("-ckpt.pt", "")) for ckpt in checkpoints if ckpt.name.endswith("-ckpt.pt")]
+        checkpoints = sorted(checkpoints)
+        correction_model_files = [correction_model_file / f"{ckpt}-ckpt.pt" for ckpt in checkpoints]
+        success_rates = []
+        for correction_model_path in correction_model_files:
+            print(f"Evaluating correction model at {correction_model_path}...")
+            success_rate = evaluate_model(
+                env,
+                policy,
+                policy_nn,
+                base_policy=args_cli.base_policy,
+                correction_model=str(correction_model_path),
+                num_evals=args_cli.num_evals * 4 if correction_model_path == correction_model_files[-1] else args_cli.num_evals,
+                enable_cameras=args_cli.enable_cameras,
+                plot_residual=args_cli.plot_residual,
+                video_path=str(args_cli.video_path) if args_cli.video_path else None,
+                horizon=args_cli.horizon,
+                device=agent_cfg.device,
+                need_reset_envs=True,
+            )
+            success_rates.append(success_rate)
+        print(checkpoints)
+        print(success_rates)
+        fig, ax = plt.subplots()
+        ax.plot(checkpoints, success_rates, marker='o')
+        ax.set_xlabel("Checkpoint")
+        ax.set_ylabel("Independent Success Rate")
+        (correction_model_file / "viz").mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(correction_model_file / "viz" / "success_rate_over_checkpoints.png"))
+        print(correction_model_file / "viz" / "success_rate_over_checkpoints.png")
+        plt.close(fig)
     
     # close the simulator
     env.close()

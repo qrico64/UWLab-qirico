@@ -419,6 +419,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if SAVE_DIRECTORY is not None:
         SAVE_DIRECTORY = pathlib.Path(SAVE_DIRECTORY)
         SAVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+        # Save the base model as ckpt_0.pt
+        save_model_at_checkpoint(base_policy, str(SAVE_DIRECTORY), 0, finetuning_arch=args_cli.finetune_arch)
+        with open(SAVE_DIRECTORY / f"info.pkl", "wb") as fi:
+            pickle.dump(base_policy_info, fi)
 
     num_epochs_so_far = 0
     num_trajs_so_far = 0
