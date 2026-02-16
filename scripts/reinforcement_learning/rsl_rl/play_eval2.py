@@ -42,6 +42,7 @@ parser.add_argument("--num_evals", type=int, default=2000, help="Number of traje
 parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
 parser.add_argument("--finetune_mode", type=str, default="residual", help="Options: residual, expert.")
 parser.add_argument("--save_path", type=str, default=None, help="Save location for checkpoints.")
+parser.add_argument("--utd_ratio", type=float, default=1.0, help="Utd ratio for finetuning.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -72,6 +73,7 @@ import cv2
 import pathlib
 import wandb
 import math
+import pickle
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -406,7 +408,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     num_epochs_so_far = 0
     num_trajs_so_far = 0
 
-    UTD_RATIO = 1
+    UTD_RATIO = args_cli.utd_ratio
+    print(f"Using UTD ratio of {UTD_RATIO}")
 
     LOG_INTERVAL = 20
     SAVE_INTERVAL = lambda x: 0 if x < 20 else (5 * int(math.log10(x) - 1) + int(x / 10 ** int(math.log10(x)) / 2))
@@ -538,6 +541,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                     if SAVE_DIRECTORY is not None and SAVE_INTERVAL(current_traj) > SAVE_INTERVAL(num_trajs_so_far):
                         save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_traj, finetuning_mode="lora")
+                        with open(SAVE_DIRECTORY / f"info.pkl", "wb") as fi:
+                            pickle.dump(base_policy_info, fi)
                     
                     num_epochs_so_far += num_epochs
                 

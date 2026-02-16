@@ -63,6 +63,8 @@ class IndependentTrajectoryDataset(Dataset):
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
         elif train_mode == "autoregressive":
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
+        elif train_mode == "full-traj":
+            self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
         else:
             raise NotImplementedError(train_mode)
 
@@ -93,6 +95,13 @@ class IndependentTrajectoryDataset(Dataset):
             assert T > 6, f"{T}"
             zt = random.randint(1, T - 1)
             context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
+            current = torch.tensor(traj['current'][zt], dtype=torch.float32)
+            label = torch.tensor(traj['label'][zt], dtype=torch.float32)
+        elif self.train_mode == "full-traj":
+            T = traj['current'].shape[0]
+            assert T > 6, f"{T}"
+            zt = random.randint(0, T - 1)
+            context = torch.tensor(traj['context'], dtype=torch.float32)
             current = torch.tensor(traj['current'][zt], dtype=torch.float32)
             label = torch.tensor(traj['label'][zt], dtype=torch.float32)
         else:
@@ -253,7 +262,7 @@ def main():
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
     parser.add_argument("--dataset_path", type=str, default="N/A", help="Path to load the dataset")
-    parser.add_argument("--train_mode", type=str, default="single-traj", help="Options: single-traj, closest-neighbors.")
+    parser.add_argument("--train_mode", type=str, default="single-traj", help="Options: single-traj, closest-neighbors, autoregressive, full-traj.")
     parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
@@ -298,7 +307,7 @@ def main():
     INSERTIVE_HIGH = np.array([args.insertive_xhigh, args.insertive_yhigh])
 
     if args.train_expert:
-        assert args.train_mode in ["autoregressive"]
+        assert args.train_mode in ["autoregressive", "full-traj"]
 
     if ENABLE_WANDB:
         WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not args.train_expert else "robot-mlp-bc"
@@ -334,7 +343,7 @@ def main():
             # 'choosable': not np.any(traj['rewards'] > 0.11),
         }
         if args.train_expert:
-            processed_traj['context'] *= 0
+            processed_traj['context'] = np.zeros((60, CONTEXT_DIM), dtype=np.float32)
             processed_traj['label'] = traj['actions_expert']
         
         processed_data.append(processed_traj)

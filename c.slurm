@@ -1,13 +1,13 @@
 #!/bin/bash -l
-#SBATCH --job-name=jan28_data_collection        # Job name
-#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/job_newobsnoise-1-0.0-0.0-60000-80--0.01-0.0/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/job_newobsnoise-1-0.0-0.0-60000-80--0.01-0.0/%j_%x_err.txt         # Error file
-#SBATCH --time=12:00:00            # Time limit (hh:mm:ss)
+#SBATCH --job-name=feb15_data_collection        # Job name
+#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb15/job_receptive_with_noise_fourthtry-1-0.0-4.0-100000-60--0.01-0.0/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb15/job_receptive_with_noise_fourthtry-1-0.0-4.0-100000-60--0.01-0.0/%j_%x_err.txt         # Error file
+#SBATCH --time=8:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
-#SBATCH --cpus-per-task=4          # CPUs per task
+#SBATCH --cpus-per-task=12          # CPUs per task
 #SBATCH --gres=gpu:1               # GPUs per node (if needed)
-#SBATCH --mem=131G                  # Memory per node
+#SBATCH --mem=200G                  # Memory per node
 #SBATCH --partition=gpu-l40        # Partition (queue) name
 #SBATCH --account=weirdlab         # Slurm account/project name
 
@@ -58,9 +58,9 @@ apptainer exec --nv \
   --num_envs 1000 \
   --use_general_scales \
   --sys_noise_scale 0.0 \
-  --rand_noise_scale 0.0 \
-  --num_trajectories 60000 \
+  --rand_noise_scale 4.0 \
+  --num_trajectories 100000 \
   --obs_receptive_noise_scale 0.01 \
   --obs_insertive_noise_scale 0.0 \
-  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/ \
+  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb15/fourthtry_receptive_0.01_with_randnoise_4.0/ \
 '
