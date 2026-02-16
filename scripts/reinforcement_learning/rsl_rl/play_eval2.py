@@ -43,6 +43,8 @@ parser.add_argument("--base_policy", type=str, default=None, help="Base model .p
 parser.add_argument("--finetune_mode", type=str, default="residual", help="Options: residual, expert.")
 parser.add_argument("--save_path", type=str, default=None, help="Save location for checkpoints.")
 parser.add_argument("--utd_ratio", type=float, default=1.0, help="Utd ratio for finetuning.")
+parser.add_argument("--finetune_arch", type=str, default="lora", help="Options: lora, full.")
+parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate for finetuning.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -205,8 +207,8 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
     )
     return frame
 
-def save_model_at_checkpoint(model: train_lib.RobotTransformerPolicy, save_path: str, epoch: int, finetuning_mode = None):
-    if finetuning_mode == "lora":
+def save_model_at_checkpoint(model: train_lib.RobotTransformerPolicy, save_path: str, epoch: int, finetuning_arch: str):
+    if finetuning_arch == "lora":
         model = train_lora_lib.convert_lora_model_to_plain_robot_policy(model)
     csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
     torch.save(model.state_dict(), csp)
@@ -318,11 +320,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device)
     assert base_policy_info['train_expert']
     base_policy = base_policy.model
-    report = train_lora_lib.verify_lora_conversion_from_model(base_policy)
-    print(report)
-
-    base_policy.head = train_lora_lib.apply_lora(base_policy.head, r=8, alpha=16, lora_dropout=0, init_std=0.01)
-    base_policy = train_lora_lib.freeze_all_but_lora(base_policy)
+    if args_cli.finetune_arch == "lora":
+        report = train_lora_lib.verify_lora_conversion_from_model(base_policy)
+        print(report)
+        base_policy.head = train_lora_lib.apply_lora(base_policy.head, r=8, alpha=16, lora_dropout=0, init_std=0.01)
+        base_policy = train_lora_lib.freeze_all_but_lora(base_policy)
+    elif args_cli.finetune_arch == "full":
+        base_policy.eval()
+    else:
+        raise NotImplementedError(f"Finetune architecture {args_cli.finetune_arch} not supported.")
 
     print("****** Base Policy Architecture ******")
     print(base_policy)
@@ -391,6 +397,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     starting_positions = get_positions(env.env.env)
 
     # TRAINING CONFIG
+    finetune_args = {
+        "base_policy": args_cli.base_policy,
+        "correction_model": args_cli.correction_model,
+        "finetune_arch": args_cli.finetune_arch,
+        "finetune_mode": args_cli.finetune_mode,
+        "utd_ratio": args_cli.utd_ratio,
+        "lr": args_cli.lr,
+    }
+    base_policy_info['finetune_args'] = finetune_args
 
     replay_buffer = {
         'index': 0,
@@ -398,7 +413,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         'label': torch.zeros(args_cli.num_evals * T_DIM, A_DIM, dtype=torch.float32, device='cpu'),
     }
     BATCH_SIZE = 64
-    optimizer = torch.optim.AdamW(base_policy.parameters(), lr=3e-4, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(base_policy.parameters(), lr=args_cli.lr, weight_decay=1e-5)
 
     SAVE_DIRECTORY = args_cli.save_path
     if SAVE_DIRECTORY is not None:
@@ -540,7 +555,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     base_policy.eval()
 
                     if SAVE_DIRECTORY is not None and SAVE_INTERVAL(current_traj) > SAVE_INTERVAL(num_trajs_so_far):
-                        save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_traj, finetuning_mode="lora")
+                        save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_traj, finetuning_arch=args_cli.finetune_arch)
                         with open(SAVE_DIRECTORY / f"info.pkl", "wb") as fi:
                             pickle.dump(base_policy_info, fi)
                     
