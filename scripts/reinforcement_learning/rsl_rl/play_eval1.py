@@ -196,6 +196,226 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
     )
     return frame
 
+
+def evaluate_model(
+    env,
+    policy,
+    policy_nn,
+    base_policy,
+    correction_model,
+    num_evals,
+    enable_cameras=False,
+    IMAGE_SIZE=(400, 400),
+    plot_residual=False,
+    video_path=None,
+    horizon=60,
+    device='cuda',
+):
+    T_DIM = horizon
+    N = env.num_envs
+
+    # Rico: Instantiate base policy!!
+    if base_policy is not None:
+        base_policy, base_policy_info = load_robot_policy(base_policy, device=device)
+        assert base_policy_info['train_expert']
+        policy = lambda temp_currents: base_policy(
+            torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
+            temp_currents['policy2'],
+            torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
+        )
+    
+    RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
+    A_DIM = env.action_space.shape[-1]
+    RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
+    CORRECTION_MODEL_FILE = os.path.abspath(correction_model)
+    print(f"Loading model at {CORRECTION_MODEL_FILE}")
+    VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
+    VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=device)
+    
+    assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
+    assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
+    assert correction_model_info['label_dim'] == A_DIM
+
+    TRAIN_EXPERT = correction_model_info['train_expert']
+
+    N_DIM = 2
+    timesteps = torch.zeros(N, N_DIM, dtype=torch.int64, device=device)
+    successes = torch.zeros(N, N_DIM, dtype=torch.bool, device=device)
+    rec_observations = torch.zeros(N, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=device)
+    rec_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
+    rec_rewards = torch.zeros(N, N_DIM, T_DIM, dtype=torch.float32, device=device)
+    curstates = torch.zeros(N, dtype=torch.int64, device=device)
+    trajectory_start_position = get_starting_position(env)
+
+    result_success_distribution = []
+    
+    obs = env.get_observations()
+
+    if correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0:
+        assert 'policy_aaaaaa' in obs.keys()
+    if correction_model_info['obs_insertive_noise_scale'] != 0:
+        raise Exception("Right now doesn't support insertive noise!!")
+
+    if correction_model_info['use_noise_scales']:
+        general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=device) / 5
+    else:
+        general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=device)
+    sys_noises = torch.randn(N, A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+    print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
+    obs_receptive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
+    print(f"Using obs_receptive_noise of {correction_model_info['obs_receptive_noise_scale']}")
+    obs_insertive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
+    print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
+
+    ENABLE_CAMERAS = enable_cameras
+    if ENABLE_CAMERAS:
+        PLOT_RESIDUAL = plot_residual
+        rec_video = np.zeros((N, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
+        VIDEO_PATH = video_path or str(VIZ_DIRECTORY / "videos")
+        os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
+        videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
+        NUM_VIDEOS = 6
+        VIDEO_FPS = 5
+    
+    starting_positions = get_positions(env.env.env)
+
+    # reset environment
+
+    SUCCESS_THRESHOLD = 0.11
+    global_timestep = 0
+    count_success = torch.zeros(N_DIM + 1, dtype=torch.int64, device='cpu')
+    while count_success.sum() < num_evals:
+        global_timestep += 1
+        with torch.inference_mode():
+            expert_actions = policy(obs)
+
+            obs_tweaked = obs.clone()
+            receptive_noise = obs_receptive_noise
+            insertive_noise = obs_insertive_noise
+            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(N, 5, 6) + receptive_noise.unsqueeze(1)
+            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(N, 5, 6) + insertive_noise.unsqueeze(1)
+            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)
+            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(N, 30)
+
+            base_actions_raw = policy(obs_tweaked)
+
+            base_actions_raw += sys_noises
+            base_actions = base_actions_raw.clone()
+
+            need_residuals = curstates > 0
+            need_residuals_count = need_residuals.sum()
+            if need_residuals_count > 0:
+                contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
+                currents = obs['policy2'][need_residuals].clone()
+                padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
+                residual_actions = correction_model(contexts, currents, padding_mask)
+                if TRAIN_EXPERT:
+                    base_actions[need_residuals, :] = residual_actions
+                else:
+                    base_actions[need_residuals, :] += residual_actions
+            if TRAIN_EXPERT:
+                base_actions[curstates == 0] *= 0
+            
+            # step
+            next_obs, reward, dones, info = env.step(base_actions)
+
+            # handle non-dones
+            indices = torch.arange(N, device=device)
+            cur_timesteps = timesteps[indices, curstates]
+            rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
+            rec_actions[indices, curstates, cur_timesteps, :] = base_actions
+            rec_rewards[indices, curstates, cur_timesteps] = reward
+            successes[indices, curstates] |= reward >= SUCCESS_THRESHOLD
+
+            if ENABLE_CAMERAS:
+                frames = obs['rgb'].cpu().detach().numpy().transpose(0, 2, 3, 1)
+                if frames.max() <= 1.0 + 1e-4:
+                    frames = (frames * 255).astype(np.uint8)
+                
+                for i in range(N):
+                    assert frames[i].shape == (*IMAGE_SIZE, 3)
+                    if PLOT_RESIDUAL:
+                        display_action = expert_actions[i] - base_actions_raw[i]
+                        display_action2 = base_actions[i] - base_actions_raw[i]
+                        display_action_str = '[' + ', '.join([f"{x:.3f}" for x in display_action.tolist()]) + ']'
+                        display_action2_str = '[' + ', '.join([f"{x:.3f}" for x in display_action2.tolist()]) + ']'
+                    else:
+                        display_action = display_action2 = None
+                        display_action_str = display_action2_str = "None"
+                    caption = f"t={timesteps[i].tolist()} r={reward[i]:.5f} done={dones[i]}"
+                    if PLOT_RESIDUAL:
+                        caption += f" residual-action={display_action_str}"
+                    caption += f"\npred-action={display_action2_str}"
+                    final_screen = render_frame(frames[i], caption, display_action=display_action, display_action2=display_action2)
+                    rec_video[i, curstates[i], timesteps[i, curstates[i]]] = final_screen
+            
+            timesteps[indices, curstates] += 1
+            obs = next_obs
+
+            # handle dones
+            policy_nn.reset(dones)
+            for i in torch.nonzero(dones).squeeze(-1):
+                if curstates[i] > 0 or successes[i, curstates[i]]:
+                    curi = curstates[i].cpu() + 1 if successes[i, curstates[i]] else 0
+                    count_success[curi] += 1
+                    if curi == 2 or curi == 0:
+                        result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), curi == 2])
+
+                    if ENABLE_CAMERAS and count_success[curi] <= NUM_VIDEOS:
+                        videopath = videopath_generator(curi, count_success[curi].item())
+                        maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
+                        maxt = min(maxt + 1, timesteps[i, curstates[i]])
+                        if TRAIN_EXPERT:
+                            # visualize expert trajectory
+                            frames = rec_video[i, curstates[i], :maxt]
+                        elif curi == 1:
+                            # first try success
+                            frames = rec_video[i, curstates[i], :maxt]
+                        elif curi == 2:
+                            # second try success
+                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :maxt]], axis=0)
+                        else:
+                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
+                        save_video(frames, videopath, fps=VIDEO_FPS)
+
+                    if count_success.sum() % 20 == 0:
+                        print(f"First try success rate: {count_success[1] / count_success.sum()}; Second try success rate: {count_success[2] / (count_success.sum() - count_success[1])}")
+                        print(f"{count_success.sum()} {count_success[1]} {count_success[2]}")
+                    
+                    if count_success.sum() % 100 == 0 and len(result_success_distribution) > 0:
+                        print(f"Success distribution size {len(result_success_distribution)}")
+                        success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
+                        success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
+                        cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", fixed_bounds=True)
+                        cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", fixed_bounds=True)
+                        cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", fixed_bounds=True)
+                        cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", fixed_bounds=True)
+                        print()
+
+                    rec_observations[i] *= 0
+                    rec_actions[i] *= 0
+                    rec_rewards[i] *= 0
+                    timesteps[i] *= 0
+                    successes[i] = False
+                    curstates[i] *= 0
+                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
+                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
+                    starting_positions[i] = get_positions(env.env.env)[i]
+                    trajectory_start_position[i] = get_starting_position(env)[i]
+                else:
+                    curstates[i] += 1
+                    set_positions_completely(env.env.env, starting_positions[i], i)
+        
+        if ENABLE_CAMERAS and torch.all(count_success >= NUM_VIDEOS):
+            break
+    
+    print(f"Loading model at {CORRECTION_MODEL_FILE}")
+    pass
+
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
@@ -237,7 +457,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Horizon: {args_cli.horizon}")
 
     # set camera & video
-    if hasattr(args_cli, "enable_cameras") and args_cli.enable_cameras:
+    if args_cli.enable_cameras:
         IMAGE_SIZE = (400, 400)
         assert IMAGE_SIZE[0] == IMAGE_SIZE[1]
         env_cfg.scene.side_camera = TiledCameraCfg(
@@ -295,206 +515,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     policy = runner.get_inference_policy(device=env.unwrapped.device)
     policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
-    # Rico: Instantiate base policy!!
-    if args_cli.base_policy is not None:
-        base_policy, base_policy_info = load_robot_policy(args_cli.base_policy, device=args_cli.device)
-        assert base_policy_info['train_expert']
-        policy = lambda temp_currents: base_policy(
-            torch.zeros(len(temp_currents), args_cli.horizon, base_policy_info['context_dim'], device=args_cli.device),
-            temp_currents['policy2'],
-            torch.zeros(len(temp_currents), args_cli.horizon, dtype=torch.bool, device=args_cli.device),
-        )
-    
-    RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
-    A_DIM = env.action_space.shape[-1]
-    RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
-    T_DIM = args_cli.horizon
-    CORRECTION_MODEL_FILE = os.path.abspath(args_cli.correction_model)
-    print(f"Loading model at {CORRECTION_MODEL_FILE}")
-    VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
-    VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
-    
-    assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
-    assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
-    assert correction_model_info['label_dim'] == A_DIM
-
-    TRAIN_EXPERT = correction_model_info['train_expert']
-
-    N_DIM = 2
-    timesteps = torch.zeros(env.num_envs, N_DIM, dtype=torch.int64, device=args_cli.device)
-    successes = torch.zeros(env.num_envs, N_DIM, dtype=torch.bool, device=args_cli.device)
-    rec_observations = torch.zeros(env.num_envs, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=args_cli.device)
-    rec_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
-    rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
-    curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
-    trajectory_start_position = get_starting_position(env)
-
-    result_success_distribution = []
-    
-    obs = env.get_observations()
-
-    if correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0:
-        assert 'policy_aaaaaa' in obs.keys()
-    if correction_model_info['obs_insertive_noise_scale'] != 0:
-        raise Exception("Right now doesn't support insertive noise!!")
-
-    if correction_model_info['use_noise_scales']:
-        general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=args_cli.device) / 5
-    else:
-        general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=args_cli.device)
-    sys_noises = torch.randn(env.num_envs, A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
-    print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
-    obs_receptive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
-    print(f"Using obs_receptive_noise of {correction_model_info['obs_receptive_noise_scale']}")
-    obs_insertive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
-    print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
-
-    if args_cli.enable_cameras:
-        PLOT_RESIDUAL = args_cli.plot_residual
-        rec_video = np.zeros((env.num_envs, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
-        VIDEO_PATH = args_cli.video_path or str(VIZ_DIRECTORY / "videos")
-        os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
-        videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
-        NUM_VIDEOS = 6
-        VIDEO_FPS = 5
-    
-    starting_positions = get_positions(env.env.env)
-
-    # reset environment
-
-    SUCCESS_THRESHOLD = 0.11
-    global_timestep = 0
-    count_success = torch.zeros(N_DIM + 1, dtype=torch.int64, device='cpu')
-    while count_success.sum() < args_cli.num_evals:
-        global_timestep += 1
-        with torch.inference_mode():
-            expert_actions = policy(obs)
-
-            obs_tweaked = obs.clone()
-            receptive_noise = obs_receptive_noise
-            insertive_noise = obs_insertive_noise
-            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(env.num_envs, 5, 6) + receptive_noise.unsqueeze(1)
-            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(env.num_envs, 5, 6) + insertive_noise.unsqueeze(1)
-            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(env.num_envs, 30)
-            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(env.num_envs, 30)
-
-            base_actions_raw = policy(obs_tweaked)
-
-            base_actions_raw += sys_noises
-            base_actions = base_actions_raw.clone()
-
-            need_residuals = curstates > 0
-            need_residuals_count = need_residuals.sum()
-            if need_residuals_count > 0:
-                contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
-                currents = obs['policy2'][need_residuals].clone()
-                padding_mask = torch.arange(T_DIM, device=args_cli.device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
-                residual_actions = correction_model(contexts, currents, padding_mask)
-                if TRAIN_EXPERT:
-                    base_actions[need_residuals, :] = residual_actions
-                else:
-                    base_actions[need_residuals, :] += residual_actions
-            if TRAIN_EXPERT:
-                base_actions[curstates == 0] *= 0
-            
-            # step
-            next_obs, reward, dones, info = env.step(base_actions)
-
-            # handle non-dones
-            indices = torch.arange(env.num_envs, device=args_cli.device)
-            cur_timesteps = timesteps[indices, curstates]
-            rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
-            rec_actions[indices, curstates, cur_timesteps, :] = base_actions
-            rec_rewards[indices, curstates, cur_timesteps] = reward
-            successes[indices, curstates] |= reward >= SUCCESS_THRESHOLD
-
-            if args_cli.enable_cameras:
-                frames = obs['rgb'].cpu().detach().numpy().transpose(0, 2, 3, 1)
-                if frames.max() <= 1.0 + 1e-4:
-                    frames = (frames * 255).astype(np.uint8)
-                
-                for i in range(env.num_envs):
-                    assert frames[i].shape == (*IMAGE_SIZE, 3)
-                    if PLOT_RESIDUAL:
-                        display_action = expert_actions[i] - base_actions_raw[i]
-                        display_action2 = base_actions[i] - base_actions_raw[i]
-                        display_action_str = '[' + ', '.join([f"{x:.3f}" for x in display_action.tolist()]) + ']'
-                        display_action2_str = '[' + ', '.join([f"{x:.3f}" for x in display_action2.tolist()]) + ']'
-                    else:
-                        display_action = display_action2 = None
-                        display_action_str = display_action2_str = "None"
-                    caption = f"t={timesteps[i].tolist()} r={reward[i]:.5f} done={dones[i]}"
-                    if PLOT_RESIDUAL:
-                        caption += f" residual-action={display_action_str}"
-                    caption += f"\npred-action={display_action2_str}"
-                    final_screen = render_frame(frames[i], caption, display_action=display_action, display_action2=display_action2)
-                    rec_video[i, curstates[i], timesteps[i, curstates[i]]] = final_screen
-            
-            timesteps[indices, curstates] += 1
-            obs = next_obs
-
-            # handle dones
-            policy_nn.reset(dones)
-            for i in torch.nonzero(dones).squeeze(-1):
-                if curstates[i] > 0 or successes[i, curstates[i]]:
-                    curi = curstates[i].cpu() + 1 if successes[i, curstates[i]] else 0
-                    count_success[curi] += 1
-                    if curi == 2 or curi == 0:
-                        result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), curi == 2])
-
-                    if args_cli.enable_cameras and count_success[curi] <= NUM_VIDEOS:
-                        videopath = videopath_generator(curi, count_success[curi].item())
-                        maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
-                        maxt = min(maxt + 1, timesteps[i, curstates[i]])
-                        if TRAIN_EXPERT:
-                            # visualize expert trajectory
-                            frames = rec_video[i, curstates[i], :maxt]
-                        elif curi == 1:
-                            # first try success
-                            frames = rec_video[i, curstates[i], :maxt]
-                        elif curi == 2:
-                            # second try success
-                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :maxt]], axis=0)
-                        else:
-                            frames = np.concatenate([rec_video[i, 0, :timesteps[i, 0]], rec_video[i, 1, :timesteps[i, 1]]], axis=0)
-                        save_video(frames, videopath, fps=VIDEO_FPS)
-
-                    if count_success.sum() % 20 == 0:
-                        print(f"First try success rate: {count_success[1] / count_success.sum()}; Second try success rate: {count_success[2] / (count_success.sum() - count_success[1])}")
-                        print(f"{count_success.sum()} {count_success[1]} {count_success[2]}")
-                    
-                    if count_success.sum() % 100 == 0 and len(result_success_distribution) > 0:
-                        print(f"Success distribution size {len(result_success_distribution)}")
-                        success_dist_locations = np.stack([instance[0] for instance in result_success_distribution], axis=0)
-                        success_dist_successes = np.array([instance[1] for instance in result_success_distribution])
-                        cur_utils.plot_success_grid(success_dist_locations[:, :2], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_receptive_location2.png", fixed_bounds=True)
-                        cur_utils.plot_success_grid(success_dist_locations[:, 2:], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_insertive_location2.png", fixed_bounds=True)
-                        cur_utils.plot_success_grid(success_dist_locations[:, [0, 2]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_x.png", fixed_bounds=True)
-                        cur_utils.plot_success_grid(success_dist_locations[:, [1, 3]], success_dist_successes, save_path = VIZ_DIRECTORY / "eval_success_by_y.png", fixed_bounds=True)
-                        print()
-
-                    rec_observations[i] *= 0
-                    rec_actions[i] *= 0
-                    rec_rewards[i] *= 0
-                    timesteps[i] *= 0
-                    successes[i] = False
-                    curstates[i] *= 0
-                    sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
-                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
-                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
-                    starting_positions[i] = get_positions(env.env.env)[i]
-                    trajectory_start_position[i] = get_starting_position(env)[i]
-                else:
-                    curstates[i] += 1
-                    set_positions_completely(env.env.env, starting_positions[i], i)
-        
-        if args_cli.enable_cameras and torch.all(count_success >= NUM_VIDEOS):
-            break
+    evaluate_model(
+        env,
+        policy,
+        policy_nn,
+        base_policy=args_cli.base_policy,
+        correction_model=args_cli.correction_model,
+        num_evals=args_cli.num_evals,
+        enable_cameras=args_cli.enable_cameras,
+        plot_residual=args_cli.plot_residual,
+        video_path=args_cli.video_path,
+        horizon=args_cli.horizon,
+        device=agent_cfg.device,
+    )
     
     # close the simulator
     env.close()
-    print(f"Loading model at {CORRECTION_MODEL_FILE}")
 
 
 if __name__ == "__main__":
