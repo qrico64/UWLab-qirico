@@ -342,8 +342,11 @@ def main():
             '__log': traj,
             # 'choosable': not np.any(traj['rewards'] > 0.11),
         }
+        if 'rand_noise' in traj.keys():
+            traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]
+            processed_traj['context'][:, CURRENT_DIM:] += traj['rand_noise']
         if args.train_expert:
-            processed_traj['context'] = np.zeros((60, CONTEXT_DIM), dtype=np.float32)
+            processed_traj['context'] *= 0
             processed_traj['label'] = traj['actions_expert']
         
         processed_data.append(processed_traj)
