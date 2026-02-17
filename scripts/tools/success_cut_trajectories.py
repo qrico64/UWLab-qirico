@@ -6,7 +6,7 @@ import os
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/jan29/job-True-0.0-0.0-60000-60--0.01-0.0/trajectories.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb15/fourthtry_receptive_0.01_with_randnoise_4.0/job-True-0.0-4.0-100000-60--0.01-0.0/trajectories.pkl"
     SAVEFILE = os.path.join(os.path.dirname(FILENAME), "cut-" + os.path.basename(FILENAME))
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
@@ -33,6 +33,8 @@ def main():
             traj['next_obs'][k] = traj['next_obs'][k][:cutoff]
         assert traj['dones'].sum() == 1
         traj['dones'] = traj['dones'][-cutoff:]
+        if 'rand_noise' in traj:
+            traj['rand_noise'] = traj['rand_noise'][:cutoff]
         result_trajs.append(traj)
     
     print(f"Elimination rate: {(len(trajs) - len(result_trajs)) / len(trajs)}")

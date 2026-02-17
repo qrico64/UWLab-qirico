@@ -71,22 +71,27 @@ def visualize_tensor_distribution(data, output_filename="distribution.png"):
     print(f"Visualization saved to {output_filename}")
 
 
-def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200):
+def save_point_distribution_image(x, out_path="dist.png", bins=400, dpi=200, fixed_bounds=False):
     """
     x: torch.Tensor, shape (N, 2) on CPU or GPU
     Saves a 2D histogram (density map) visualization to out_path.
     """
-    x = x.detach()
-    if x.is_cuda:
-        x = x.cpu()
-    x = x.float()
+    if isinstance(x, torch.Tensor):
+        x = x.detach()
+        if x.is_cuda:
+            x = x.cpu()
+        x = x.float().numpy()
 
     fig, ax = plt.subplots()
-    ax.hist2d(x[:, 0].numpy(), x[:, 1].numpy(), bins=bins)
+    if not fixed_bounds:
+        ax.hist2d(x[:, 0], x[:, 1], bins=bins)
+    else:
+        ax.hist2d(x[:, 0], x[:, 1], bins=bins, range=[[0.25, 0.6], [-0.15, 0.55]])
     ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("2D point distribution")
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
+    print(f"Saved to: {out_path}")
 
 
 
@@ -1053,6 +1058,7 @@ class MultiResetManager(ManagerTermBase):
 
         base_paths: list[str] = cfg.params.get("base_paths", [])
         probabilities: list[float] = cfg.params.get("probs", [])
+        reset_mode: str = cfg.params.get("reset_mode", "none")
 
         if not base_paths:
             raise ValueError("No base paths provided")
@@ -1086,11 +1092,20 @@ class MultiResetManager(ManagerTermBase):
 
             all_insertive_poses = torch.stack(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'], dim=0)
             all_receptive_poses = torch.stack(dataset['initial_state']['rigid_object']['receptive_object']['root_pose'], dim=0)
-            init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
-            init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+            if reset_mode == "xleq035":
+                init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.35) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
+                init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.35) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+            elif reset_mode == "recxgeq05":
+                init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
+                init_indices_mask &= (all_receptive_poses[:, 0] > 0.5) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+            elif reset_mode == "none":
+                init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
+                init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+            else:
+                raise NotImplementedError(f"Unsupported reset_mode: {reset_mode}")
             init_indices = torch.nonzero(init_indices_mask).squeeze(-1).to(device=env.device)
-            save_point_distribution_image(all_insertive_poses[init_indices], "viz/insertive_distribution.png")
-            save_point_distribution_image(all_receptive_poses[init_indices], "viz/receptive_distribution.png")
+            save_point_distribution_image(all_insertive_poses[init_indices], "viz/insertive_distribution.png", fixed_bounds=True)
+            save_point_distribution_image(all_receptive_poses[init_indices], "viz/receptive_distribution.png", fixed_bounds=True)
 
             print(f"For dataset {dataset_file}, loaded {len(init_indices)}/{len(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'])} reset states!!!")
             num_states.append(len(init_indices))
@@ -1117,6 +1132,7 @@ class MultiResetManager(ManagerTermBase):
         base_paths: list[str],
         probs: list[float],
         success: str | None = None,
+        reset_mode: str = 'none',
     ) -> None:
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self._env.device)

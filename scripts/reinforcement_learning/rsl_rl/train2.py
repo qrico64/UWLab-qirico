@@ -369,6 +369,7 @@ def main():
 
     save_dict = {
         'dataset_origin': os.path.abspath(DATASET_PATH),
+        'dataset_size': len(processed_data),
         'save_path': save_path,
         'current_means': current_means,
         'current_stds': current_stds,

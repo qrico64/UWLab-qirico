@@ -40,6 +40,7 @@ parser.add_argument("--plot_residual", action="store_true", default=False, help=
 parser.add_argument("--video_path", type=str, default=None, help="Save location for videos.")
 parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
 parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
+parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -205,6 +206,7 @@ def evaluate_model(
     base_policy,
     correction_model,
     num_evals,
+    reset_mode='none',
     need_reset_envs=True,
     enable_cameras=False,
     IMAGE_SIZE=(400, 400),
@@ -232,7 +234,7 @@ def evaluate_model(
     CORRECTION_MODEL_FILE = pathlib.Path(correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
-    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz")
+    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / reset_mode
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
     correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=device)
     
@@ -431,7 +433,10 @@ def evaluate_model(
             break
     
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
-    return (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
+    final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
+    with open(VIZ_DIRECTORY / "final_success_rate.txt", 'w') as f:
+        f.write(f"{final_success_rate}")
+    return final_success_rate
 
 
 
@@ -498,6 +503,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.observations.rgb.side_rgb.params['output_size'] = IMAGE_SIZE
         print(f"Video generation on at size/resolution {IMAGE_SIZE}")
 
+    env_cfg.events.reset_from_reset_states.params['reset_mode'] = args_cli.reset_mode
+
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
@@ -543,6 +550,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             base_policy=args_cli.base_policy,
             correction_model=args_cli.correction_model,
             num_evals=args_cli.num_evals,
+            reset_mode=args_cli.reset_mode,
             enable_cameras=args_cli.enable_cameras,
             plot_residual=args_cli.plot_residual,
             video_path=args_cli.video_path,
@@ -565,6 +573,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 base_policy=args_cli.base_policy,
                 correction_model=str(correction_model_path),
                 num_evals=args_cli.num_evals * 4 if correction_model_path == correction_model_files[-1] else args_cli.num_evals,
+                reset_mode=args_cli.reset_mode,
                 enable_cameras=args_cli.enable_cameras,
                 plot_residual=args_cli.plot_residual,
                 video_path=str(args_cli.video_path) if args_cli.video_path else None,

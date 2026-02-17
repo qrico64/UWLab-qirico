@@ -45,6 +45,7 @@ parser.add_argument("--save_path", type=str, default=None, help="Save location f
 parser.add_argument("--utd_ratio", type=float, default=1.0, help="Utd ratio for finetuning.")
 parser.add_argument("--finetune_arch", type=str, default="lora", help="Options: lora, full.")
 parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate for finetuning.")
+parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035, recxgeq05.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -278,6 +279,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.observations.rgb = env_cfg.observations.RGBCfg()
         env_cfg.observations.rgb.side_rgb.params['output_size'] = IMAGE_SIZE
         print(f"Video generation on at size/resolution {IMAGE_SIZE}")
+
+    env_cfg.events.reset_from_reset_states.params['reset_mode'] = args_cli.reset_mode
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)

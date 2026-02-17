@@ -44,6 +44,7 @@ parser.add_argument("--obs_insertive_noise_scale", type=float, default=0, help="
 parser.add_argument("--record_path", type=str, default="trajectories_ynnn.pkl", help="Path to save the recorded trajectories.")
 parser.add_argument("--num_trajectories", type=int, default=10, help="Number of trajectories to record.")
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
+parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035, recxgeq05.")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -143,6 +144,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.episode_length_s = args_cli.horizon / 10
     print(f"Horizon: {args_cli.horizon}")
 
+    env_cfg.events.reset_from_reset_states.params['reset_mode'] = args_cli.reset_mode
+
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
@@ -229,6 +232,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "next_obs": {k: [] for k in obskeys},
             "actions_expert": [],
             "sys_noise": np.random.normal(size=action_shape[1:], scale=sys_noise_scale),
+            "rand_noise": [],
             "obs_receptive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_receptive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
             "obs_insertive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_insertive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
             "starting_position": None,
@@ -267,15 +271,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
             rand_noise = np.random.normal(size=action_shape) * rand_noise_scale
             sys_noise = np.stack([current_episodes[i]["sys_noise"] for i in range(env.num_envs)], axis=0)
-            rand_noise += sys_noise
-            rand_noise *= general_noise_scales
-            actions += torch.tensor(rand_noise, dtype=actions.dtype, device=actions.device)
+            actions += torch.tensor(sys_noise * general_noise_scales, dtype=actions.dtype, device=actions.device)
             
             # Store observations and actions (before env step)
             obs_np = to_numpy(obs)
             actions_np = to_numpy(actions)
             
-            next_obs, rewards, dones, infos = env.step(actions)
+            next_obs, rewards, dones, infos = env.step(actions + torch.tensor(rand_noise * general_noise_scales, dtype=actions.dtype, device=actions.device))
             
             next_obs_np = to_numpy(next_obs)
             rewards_np = to_numpy(rewards)
@@ -302,6 +304,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     current_episodes[i]["obs"][k].append(obs_np[k][i])
                     current_episodes[i]["next_obs"][k].append(next_obs_np[k][i])
                 current_episodes[i]["actions"].append(actions_np[i])
+                current_episodes[i]["rand_noise"].append(rand_noise[i] * general_noise_scales)
                 current_episodes[i]["actions_expert"].append(actions_expert_np[i])
                 current_episodes[i]["rewards"].append(rewards_np[i])
                 current_episodes[i]["dones"].append(dones_np[i])
@@ -317,6 +320,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         "next_obs": {k: np.array(v) for k, v in current_episodes[i]["next_obs"].items()},
                         "actions_expert": np.array(current_episodes[i]["actions_expert"]),
                         "sys_noise": np.array(current_episodes[i]["sys_noise"]),
+                        "rand_noise": np.array(current_episodes[i]["rand_noise"]),
                         "starting_position": {k: v.detach().cpu().numpy() for k, v in current_episodes[i]["starting_position"].items()},
                         "obs_receptive_noise": np.array(current_episodes[i]["obs_receptive_noise"]),
                         "obs_insertive_noise": np.array(current_episodes[i]["obs_insertive_noise"]),
@@ -343,6 +347,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         "next_obs": {k: [] for k in obskeys},
                         "actions_expert": [],
                         "sys_noise": np.random.normal(size=action_shape[1:], scale=sys_noise_scale),
+                        "rand_noise": [],
                         "obs_receptive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_receptive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
                         "obs_insertive_noise": np.concatenate([np.random.normal(size=(2,), scale=args_cli.obs_insertive_noise_scale), np.zeros((4,), dtype=np.float32)], axis=0),
                         "starting_position": None,
