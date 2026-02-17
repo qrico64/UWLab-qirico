@@ -102,7 +102,7 @@ import cur_utils
 
 def save_video(frames, path, fps=30):
     """Saves a list of frames (numpy arrays) to a video file."""
-    print(f"[INFO] Saving video to {path}...")
+    print(f"[INFO] Saving video to {path}")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     writer = imageio.get_writer(path, fps=fps)
     for frame in frames:
@@ -278,7 +278,7 @@ def evaluate_model(
     if ENABLE_CAMERAS:
         PLOT_RESIDUAL = plot_residual
         rec_video = np.zeros((N, 2, T_DIM, IMAGE_SIZE[0], IMAGE_SIZE[1] * 2 if PLOT_RESIDUAL else IMAGE_SIZE[1], 3), dtype=np.uint8)
-        VIDEO_PATH = video_path or str(VIZ_DIRECTORY / "videos")
+        VIDEO_PATH = video_path or str(VIZ_DIRECTORY / "video" / "videos.mp4")
         os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
         NUM_VIDEOS = 6
