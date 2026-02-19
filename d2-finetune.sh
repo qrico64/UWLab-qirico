@@ -30,12 +30,13 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   env.scene.receptive_object=peghole \
   --headless \
   --num_envs 10 \
-  --num_evals 10000 \
-  --finetune_mode expert \
+  --num_evals 5000 \
+  --finetune_mode residual \
   --base_policy /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt \
-  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb12/thirdtry_obsnoise_0.01_randnoise_2.0_normboth_0.8dataset/300-ckpt.pt \
-  --save_path /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb15/finetune-utd1-trainfullmodel-lr5e_6---expert-ds_random5-receptive_x_geq_05-5layers_x4_relu---expert \
+  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb17/fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000/1000-ckpt.pt \
+  --save_path /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb18/finetune-lora--fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000 \
   --utd_ratio 1.0 \
-  --finetune_arch full \
-  --lr 5e-6 \
+  --finetune_arch lora \
+  --lr 3e-4 \
+  --reset_mode xleq035 \
 '

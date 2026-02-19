@@ -219,6 +219,7 @@ def evaluate_model(
     N = env.num_envs
 
     # Rico: Instantiate base policy!!
+    BASE_POLICY_FILE = pathlib.Path(base_policy) if base_policy is not None else None
     if base_policy is not None:
         base_policy, base_policy_info = load_robot_policy(base_policy, device=device)
         assert base_policy_info['train_expert']
@@ -432,7 +433,8 @@ def evaluate_model(
         if ENABLE_CAMERAS and torch.all(count_success >= NUM_VIDEOS):
             break
     
-    print(f"Loading model at {CORRECTION_MODEL_FILE}")
+    print(f"Correction model at {CORRECTION_MODEL_FILE}")
+    print(f"Base policy at {BASE_POLICY_FILE}")
     final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
     with open(VIZ_DIRECTORY / "final_success_rate.txt", 'w') as f:
         f.write(f"{final_success_rate}")

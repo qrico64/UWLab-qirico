@@ -5,12 +5,14 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --d_model 512 \
     --dropout 0.1 \
     --batch_size 256 \
-    --save_path experiments/feb14/thirdtry_obsnoise_0.01_randnoise_4.0_normboth_0.8dataset_singletraj \
-    --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb12/thirdtry_receptive_0.01_with_randnoise_4.0/job-True-0.0-4.0-100000-60--0.01-0.0/cut-trajectories.pkl \
-    --train_mode single-traj \
+    --save_path experiments/feb18/fourthtry_rand2_xgeq05_neighbor0001_bigdata \
+    --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl \
+    --train_mode closest-neighbors \
     --closest_neighbors_radius 0.001 \
     --warm_start 10 \
     --train_percent 0.8 \
+    \
+    --receptive_xlow 0.5 \
 
 
 
