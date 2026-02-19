@@ -321,13 +321,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # Rico: Instantiate base policy!!
     assert args_cli.base_policy is not None
     base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device)
-    assert base_policy_info['train_expert']
+    assert base_policy_info['infer_mode'] == "expert"
     base_policy = base_policy.model
     if args_cli.finetune_arch == "lora":
         report = train_lora_lib.verify_lora_conversion_from_model(base_policy)
         print(report)
         base_policy.head = train_lora_lib.apply_lora(base_policy.head, r=8, alpha=16, lora_dropout=0, init_std=0.01)
         base_policy = train_lora_lib.freeze_all_but_lora(base_policy)
+        base_policy.eval()
     elif args_cli.finetune_arch == "full":
         base_policy.eval()
     else:
@@ -458,7 +459,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 fake_context = torch.zeros(env.num_envs, args_cli.horizon, base_policy_info['context_dim'], dtype=torch.float32, device=args_cli.device)
                 fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
                 currents = (obs['policy2'] - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
-                base_actions = base_policy(fake_context, currents, fake_padding_mask)
+                fake_base_actions = torch.zeros(env.num_envs, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
+                base_actions = base_policy(fake_context, currents, fake_base_actions, fake_padding_mask)
                 base_actions = base_actions * base_policy_info['label_stds_tensor'] + base_policy_info['label_means_tensor']
                 
                 # step
@@ -484,15 +486,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     T = min(timesteps[i, 0], (rec_rewards[i, 0, :timesteps[i, 0]] < SUCCESS_THRESHOLD).sum() + 1)
                     context = torch.cat([rec_observations[i, 0, :T], rec_actions[i, 0, :T]], axis=1)
                     current = rec_observations[i, 0, :T]
-                    padding_mask = torch.zeros(T, T, dtype=torch.bool, device=args_cli.device)
+                    cur_base_actions = rec_actions[i, 0, :T]
                     residual_actions = correction_model(
                         context.repeat(T, 1, 1),
                         current,
-                        padding_mask,
+                        cur_base_actions,
                     )
 
                     stored_currents = (current - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
-                    labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else (rec_actions[i, 0, :T] + residual_actions)
+                    labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else residual_actions
                     stored_labels = (labels - base_policy_info['label_means_tensor']) / base_policy_info['label_stds_tensor']
                     replay_buffer['current'][replay_buffer['index']:replay_buffer['index'] + T] = stored_currents.cpu()
                     replay_buffer['label'][replay_buffer['index']:replay_buffer['index'] + T] = stored_labels.cpu()
@@ -538,9 +540,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         batch_label = replay_buffer['label'][idxs].to(args_cli.device)
                         fake_context = torch.zeros(batch_size, args_cli.horizon, RESIDUAL_CONTEXT_DIM, dtype=torch.float32, device=args_cli.device)
                         fake_padding_mask = torch.zeros(batch_size, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
+                        fake_base_actions = torch.zeros(batch_size, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
 
                         optimizer.zero_grad()
-                        pred_actions = base_policy(fake_context, batch_current, fake_padding_mask)
+                        pred_actions = base_policy(fake_context, batch_current, fake_base_actions, fake_padding_mask)
                         loss = torch.nn.functional.mse_loss(pred_actions, batch_label)
                         loss.backward()
                         optimizer.step()

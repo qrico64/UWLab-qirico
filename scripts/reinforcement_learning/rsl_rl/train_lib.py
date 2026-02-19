@@ -40,6 +40,7 @@ class RobotTransformerPolicy(nn.Module):
             use_new_head_arch=False,
             num_head_layers=3,
             d_model_head=1024,
+            infer_mode: str = "residual", # Options: "residual", "expert", "res_scale_shift".
         ):
         super().__init__()
 
@@ -54,6 +55,7 @@ class RobotTransformerPolicy(nn.Module):
             use_new_head_arch=use_new_head_arch,
             num_head_layers=num_head_layers,
             d_model_head=d_model_head,
+            infer_mode=infer_mode,
         )
 
         self.context_proj = nn.Linear(context_dim, d_model)
@@ -67,13 +69,16 @@ class RobotTransformerPolicy(nn.Module):
             batch_first=True, dropout=dropout
         )
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
+
+        # head
+        head_out_dim = label_dim * 2 if infer_mode == "res_scale_shift" else label_dim
         if not use_new_head_arch:
             self.head = nn.Sequential(
                 nn.Linear(d_model * 2, d_model * 2),
                 nn.ReLU(),
                 nn.Linear(d_model * 2, d_model),
                 nn.ReLU(),
-                nn.Linear(d_model, label_dim)
+                nn.Linear(d_model, head_out_dim)
             )
         else:
             assert num_head_layers >= 3
@@ -81,7 +86,7 @@ class RobotTransformerPolicy(nn.Module):
             for _ in range(num_head_layers - 3):
                 head_layers += block(d_model_head, d_model_head, dropout)
             head_layers += block(d_model_head, d_model, dropout)
-            head_layers += [nn.Linear(d_model, label_dim)]
+            head_layers += [nn.Linear(d_model, head_out_dim)]
             self.head = nn.Sequential(*head_layers)
         print()
         print("****** Creating Transformer Policy ******")
@@ -90,7 +95,7 @@ class RobotTransformerPolicy(nn.Module):
         print("****** End Transformer Policy ******")
         print()
 
-    def forward(self, context, current, padding_mask=None):
+    def forward(self, context, current, base_actions, padding_mask=None):
         ctx_emb = self.ctx_norm(self.context_proj(context))
         ctx_emb = self.pos_encoder(ctx_emb)
         
@@ -110,7 +115,16 @@ class RobotTransformerPolicy(nn.Module):
             
         curr_emb = self.curr_norm(self.current_proj(current))
         combined = torch.cat([ctx_agg, curr_emb], dim=-1)
-        return self.head(combined)
+        output = self.head(combined)
+        if self.policy_cfg["infer_mode"] == "expert":
+            new_actions = output
+        elif self.policy_cfg["infer_mode"] == "residual":
+            new_actions = base_actions + output
+        elif self.policy_cfg["infer_mode"] == "res_scale_shift":
+            scale = output[:, :self.policy_cfg["label_dim"]]
+            shift = output[:, self.policy_cfg["label_dim"]:]
+            new_actions = base_actions + shift
+        return new_actions
 
 
 class ProcessedRobotTransformerPolicy(nn.Module):
@@ -136,6 +150,9 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "num_head_layers": 2,
             "d_model_head": 1024,
         } | save_dict
+        save_dict = {
+            "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
+        } | save_dict
         self.save_dict = save_dict
 
         # build model
@@ -149,6 +166,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             use_new_head_arch=save_dict["use_new_head_arch"],
             num_head_layers=save_dict["num_head_layers"],
             d_model_head=save_dict["d_model_head"],
+            infer_mode=save_dict["infer_mode"],
         )
 
         # load weights
@@ -170,6 +188,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
 
         print()
         print(f"Loaded {save_path} !!!")
+        print(f"infer_mode: {self.save_dict['infer_mode']}")
         print(f"context_means: {self.context_means}")
         print(f"context_stds: {self.context_stds}")
         print(f"current_means: {self.current_means}")
@@ -181,15 +200,17 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         self.to(self.device).eval()
 
     @torch.no_grad()
-    def forward(self, context, current, padding_mask=None):
+    def forward(self, context, current, base_actions, padding_mask=None):
         context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
         current = torch.as_tensor(current, device=self.device, dtype=torch.float32)
+        base_actions = torch.as_tensor(base_actions, device=self.device, dtype=torch.float32)
 
         eps = 1e-8
         context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
         current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
+        base_actions = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
 
-        out_n = self.model(context_n, current_n, padding_mask=padding_mask)
+        out_n = self.model(context_n, current_n, base_actions, padding_mask=padding_mask)
         out = out_n * self.label_stds + self.label_means
         return out
 

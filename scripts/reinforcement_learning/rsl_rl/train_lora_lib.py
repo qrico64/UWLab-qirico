@@ -312,12 +312,13 @@ def verify_lora_conversion_from_model(lora_model: RobotTransformerPolicy):
     # 3. Generate dummy input based on model attributes
     ctx = torch.randn(batch_size, seq_len, cfg["context_dim"]).to(device)
     curr = torch.randn(batch_size, cfg["current_dim"]).to(device)
+    basea = torch.zeros(batch_size, cfg["label_dim"]).to(device)
     
     # 4. Get output from LoRA model (Ensure eval mode for consistency)
     was_training = lora_model.training
     lora_model.eval()
     with torch.no_grad():
-        output_lora = lora_model(ctx, curr)
+        output_lora = lora_model(ctx, curr, basea)
     
     # 5. Convert to a NEW plain model (this function handles the logic)
     # Your toolkit's function creates a 'plain' copy and performs the math
@@ -326,7 +327,7 @@ def verify_lora_conversion_from_model(lora_model: RobotTransformerPolicy):
     
     # 6. Get output from the reconstructed plain model
     with torch.no_grad():
-        output_plain = plain_model(ctx, curr)
+        output_plain = plain_model(ctx, curr, basea)
     
     # 7. Compare outputs
     # We use a small epsilon for float32 precision limits

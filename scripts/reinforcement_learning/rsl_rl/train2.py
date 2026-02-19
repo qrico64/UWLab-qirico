@@ -81,7 +81,8 @@ class IndependentTrajectoryDataset(Dataset):
             second_traj = self.data[np.random.choice(self.valid_seconds[idx])]
             st = random.randint(0, second_traj['current'].shape[0] - 1)
             current = torch.tensor(second_traj['current'][st], dtype=torch.float32)
-            label = torch.tensor(second_traj['label'][st], dtype=torch.float32)
+            base_action = torch.tensor(second_traj['base_actions'][st], dtype=torch.float32)
+            expert_action = torch.tensor(second_traj['expert_actions'][st], dtype=torch.float32)
         elif self.train_mode == "single-traj":
             T = traj['context'].shape[0]
             assert T > 6, f"{T}"
@@ -89,31 +90,34 @@ class IndependentTrajectoryDataset(Dataset):
             st = random.randint(zt, T - 1)
             context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
             current = torch.tensor(traj['current'][st], dtype=torch.float32)
-            label = torch.tensor(traj['label'][st], dtype=torch.float32)
+            base_action = torch.tensor(traj['base_actions'][st], dtype=torch.float32)
+            expert_action = torch.tensor(traj['expert_actions'][st], dtype=torch.float32)
         elif self.train_mode == "autoregressive":
             T = traj['context'].shape[0]
             assert T > 6, f"{T}"
             zt = random.randint(1, T - 1)
             context = torch.tensor(traj['context'][:zt], dtype=torch.float32)
             current = torch.tensor(traj['current'][zt], dtype=torch.float32)
-            label = torch.tensor(traj['label'][zt], dtype=torch.float32)
+            base_action = torch.tensor(traj['base_actions'][zt], dtype=torch.float32)
+            expert_action = torch.tensor(traj['expert_actions'][zt], dtype=torch.float32)
         elif self.train_mode == "full-traj":
             T = traj['current'].shape[0]
             assert T > 6, f"{T}"
             zt = random.randint(0, T - 1)
             context = torch.tensor(traj['context'], dtype=torch.float32)
             current = torch.tensor(traj['current'][zt], dtype=torch.float32)
-            label = torch.tensor(traj['label'][zt], dtype=torch.float32)
+            base_action = torch.tensor(traj['base_actions'][zt], dtype=torch.float32)
+            expert_action = torch.tensor(traj['expert_actions'][zt], dtype=torch.float32)
         else:
             raise NotImplementedError(self.train_mode)
         
-        return context, current, label
+        return context, current, base_action, expert_action
 
 def collate_fn(batch):
     """
     Custom collator to pad trajectories of different lengths.
     """
-    contexts, currents, labels = zip(*batch)
+    contexts, currents, base_actions, expert_actions = zip(*batch)
     
     # Pad sequences to the max length in this specific batch
     # padded_contexts shape: (Batch, Max_T, Context_Dim)
@@ -126,9 +130,10 @@ def collate_fn(batch):
         padding_mask[i, len(ctx):] = True
         
     currents = torch.stack(currents)
-    labels = torch.stack(labels)
+    base_actions = torch.stack(base_actions)
+    expert_actions = torch.stack(expert_actions)
     
-    return padded_contexts, currents, labels, padding_mask
+    return padded_contexts, currents, base_actions, expert_actions, padding_mask
 
 def train_behavior_cloning(
         model,
@@ -185,13 +190,13 @@ def train_behavior_cloning(
         train_loss = 0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         
-        for context, current, label, padding_mask in pbar:
-            context, current, label = context.to(device), current.to(device), label.to(device)
+        for context, current, base_actions, expert_actions, padding_mask in pbar:
+            context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
             
             optimizer.zero_grad()
-            pred = model(context, current, padding_mask)
-            loss = criterion(pred, label)
+            pred = model(context, current, base_actions, padding_mask)
+            loss = criterion(pred, expert_actions)
             
             loss.backward()
             optimizer.step()
@@ -203,11 +208,11 @@ def train_behavior_cloning(
         model.eval()
         val_loss = 0
         with torch.no_grad():
-            for context, current, label, padding_mask in val_loader:
-                context, current, label = context.to(device), current.to(device), label.to(device)
+            for context, current, base_actions, expert_actions, padding_mask in val_loader:
+                context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
-                pred = model(context, current, padding_mask)
-                vloss = criterion(pred, label)
+                pred = model(context, current, base_actions, padding_mask)
+                vloss = criterion(pred, expert_actions)
                 val_loss += vloss.item()
 
         avg_train_loss = train_loss / len(train_loader)
@@ -266,7 +271,7 @@ def main():
     parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
-    parser.add_argument("--train_expert", action="store_true", default=False, help="Whether we're training an expert or a residual.")
+    parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
 
     # Head architecture
     parser.add_argument("--use_new_head_arch", action="store_true", default=False, help="Whether we're using LayerNorm + SiLU + Dropout.")
@@ -306,11 +311,11 @@ def main():
     INSERTIVE_LOW = np.array([args.insertive_xlow, args.insertive_ylow])
     INSERTIVE_HIGH = np.array([args.insertive_xhigh, args.insertive_yhigh])
 
-    if args.train_expert:
+    if args.infer_mode == "expert":
         assert args.train_mode in ["autoregressive", "full-traj"]
 
     if ENABLE_WANDB:
-        WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not args.train_expert else "robot-mlp-bc"
+        WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not args.infer_mode == "expert" else "robot-mlp-bc"
         wandb.init(project=WANDB_PROJECT, config=vars(args))
     
     DATASET_PATH = args.dataset_path
@@ -336,7 +341,8 @@ def main():
         processed_traj = {
             'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
             'current': traj['obs']['policy2'],
-            'label': traj['actions_expert'] - traj['actions'],
+            'base_actions': traj['actions'],
+            'expert_actions': traj['actions_expert'],
             'choosable': traj['obs']['policy2'].shape[0] > 6,
             'obs_receptive_noise': traj['obs_receptive_noise'],
             '__log': traj,
@@ -345,14 +351,12 @@ def main():
         if 'rand_noise' in traj.keys():
             traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]
             processed_traj['context'][:, CURRENT_DIM:] += traj['rand_noise']
-        if args.train_expert:
+        if args.infer_mode == "expert":
             processed_traj['context'] *= 0
-            processed_traj['label'] = traj['actions_expert']
         
         processed_data.append(processed_traj)
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
     assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
-    assert processed_data[0]['label'].shape[-1] == LABEL_DIM
     print(f"Kept {len(processed_data)}/{len(trajs)} ({len(processed_data)/len(trajs)}) trajectories.")
 
     # Current normalization
@@ -362,13 +366,14 @@ def main():
     all_contexts = np.concatenate([traj['context'] for traj in processed_data], axis=0)
     context_means = all_contexts.mean(axis=0)
     context_stds = all_contexts.std(axis=0) + 1e-9
-    all_labels = np.concatenate([traj['label'] for traj in processed_data], axis=0)
+    all_labels = np.concatenate([traj['expert_actions'] for traj in processed_data] + [traj['base_actions'] for traj in processed_data], axis=0)
     label_means = all_labels.mean(axis=0)
     label_stds = all_labels.std(axis=0)
     for traj in processed_data:
         traj['current'] = (traj['current'] - current_means) / current_stds
         traj['context'] = (traj['context'] - context_means) / context_stds
-        traj['label'] = (traj['label'] - label_means) / label_stds
+        traj['base_actions'] = (traj['base_actions'] - label_means) / label_stds
+        traj['expert_actions'] = (traj['expert_actions'] - label_means) / label_stds
 
     save_dict = {
         'dataset_origin': os.path.abspath(DATASET_PATH),
@@ -390,7 +395,7 @@ def main():
         'closest_neighbors_radius': args.closest_neighbors_radius,
         'warm_start': args.warm_start,
         'train_percent': args.train_percent,
-        'train_expert': args.train_expert,
+        'train_expert': args.infer_mode == "expert",
 
         'use_new_head_arch': args.use_new_head_arch,
         'num_head_layers': args.num_head_layers,
@@ -400,6 +405,7 @@ def main():
         'receptive_high': RECEPTIVE_HIGH,
         'insertive_low': INSERTIVE_LOW,
         'insertive_high': INSERTIVE_HIGH,
+        'infer_mode': args.infer_mode,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
@@ -426,9 +432,15 @@ def main():
     # Visualization
     viz_path = os.path.join(save_path, "viz")
     os.makedirs(viz_path, exist_ok=True)
-    all_labels_viz = np.concatenate([traj['label'] for traj in processed_data], axis=0)
+    all_base_actions_viz = np.concatenate([traj['base_actions'] for traj in processed_data], axis=0)
     for i in range(LABEL_DIM):
-        cur_utils.save_histogram(all_labels_viz[:, i], os.path.join(viz_path, f"label_{i}.png"))
+        cur_utils.save_histogram(all_base_actions_viz[:, i], os.path.join(viz_path, f"base_action_{i}.png"))
+    all_expert_actions_viz = np.concatenate([traj['expert_actions'] for traj in processed_data], axis=0)
+    for i in range(LABEL_DIM):
+        cur_utils.save_histogram(all_expert_actions_viz[:, i], os.path.join(viz_path, f"expert_action_{i}.png"))
+    all_residual_actions_viz = np.concatenate([traj['expert_actions'] - traj['base_actions'] for traj in processed_data], axis=0)
+    for i in range(LABEL_DIM):
+        cur_utils.save_histogram(all_residual_actions_viz[:, i], os.path.join(viz_path, f"residual_action_{i}.png"))
     all_receptive_locations = np.stack([traj['__log']['starting_position']['receptive_position'] for traj in processed_data], axis=0)[:, :2]
     all_insertive_locations = np.stack([traj['__log']['starting_position']['insertive_position'] for traj in processed_data], axis=0)[:, :2]
     cur_utils.save_point_distribution_image(all_receptive_locations, os.path.join(viz_path, f"loaded_receptive_locations.png"), fixed_bounds=True)
@@ -459,6 +471,7 @@ def main():
         use_new_head_arch=args.use_new_head_arch,
         num_head_layers=args.num_head_layers,
         d_model_head=args.d_model_head,
+        infer_mode=args.infer_mode,
     )
     model.to(device)
     if ENABLE_WANDB:

@@ -41,6 +41,7 @@ parser.add_argument("--video_path", type=str, default=None, help="Save location 
 parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
 parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
 parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035.")
+parser.add_argument("--no_viz", action="store_true", default=False, help="Whether to disable all visualization (including videos).")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -214,6 +215,7 @@ def evaluate_model(
     video_path=None,
     horizon=60,
     device='cuda',
+    no_viz: bool = False,
 ):
     T_DIM = horizon
     N = env.num_envs
@@ -226,6 +228,7 @@ def evaluate_model(
         policy = lambda temp_currents: base_policy(
             torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
             temp_currents['policy2'],
+            torch.zeros(len(temp_currents), T_DIM, base_policy_info['label_dim'], device=device),
             torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
         )
     
@@ -236,8 +239,10 @@ def evaluate_model(
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
     VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / reset_mode
+    if no_viz:
+        VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / reset_mode
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=device)
+    correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
     
     assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
@@ -316,11 +321,9 @@ def evaluate_model(
                 contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
                 currents = obs['policy2'][need_residuals].clone()
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
-                residual_actions = correction_model(contexts, currents, padding_mask)
-                if TRAIN_EXPERT:
-                    base_actions[need_residuals, :] = residual_actions
-                else:
-                    base_actions[need_residuals, :] += residual_actions
+                cur_base_actions = base_actions[need_residuals].clone()
+                residual_actions = correction_model(contexts, currents, cur_base_actions, padding_mask)
+                base_actions[need_residuals, :] = residual_actions
             if TRAIN_EXPERT:
                 base_actions[curstates == 0] *= 0
             
@@ -559,6 +562,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             horizon=args_cli.horizon,
             device=agent_cfg.device,
             need_reset_envs=False,
+            no_viz=args_cli.no_viz,
         )
     elif correction_model_file.is_dir():
         checkpoints = list(correction_model_file.glob("*.pt"))
@@ -582,6 +586,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 horizon=args_cli.horizon,
                 device=agent_cfg.device,
                 need_reset_envs=True,
+                no_viz=args_cli.no_viz,
             )
             success_rates.append(success_rate)
         print(checkpoints)
