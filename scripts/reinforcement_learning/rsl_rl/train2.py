@@ -366,13 +366,21 @@ def main():
     all_contexts = np.concatenate([traj['context'] for traj in processed_data], axis=0)
     context_means = all_contexts.mean(axis=0)
     context_stds = all_contexts.std(axis=0) + 1e-9
-    all_labels = np.concatenate([traj['expert_actions'] for traj in processed_data] + [traj['base_actions'] for traj in processed_data], axis=0)
+    if args.infer_mode == "expert":
+        all_labels = np.concatenate([traj['expert_actions'] for traj in processed_data], axis=0)
+    elif args.infer_mode == "res_scale_shift":
+        all_labels = np.concatenate([traj['expert_actions'] for traj in processed_data] + [traj['base_actions'] for traj in processed_data], axis=0)
+    elif args.infer_mode == "residual":
+        all_labels = np.concatenate([traj['expert_actions'] - traj['base_actions'] for traj in processed_data], axis=0)
     label_means = all_labels.mean(axis=0)
     label_stds = all_labels.std(axis=0)
     for traj in processed_data:
         traj['current'] = (traj['current'] - current_means) / current_stds
         traj['context'] = (traj['context'] - context_means) / context_stds
-        traj['base_actions'] = (traj['base_actions'] - label_means) / label_stds
+        if args.infer_mode == "res_scale_shift":
+            traj['base_actions'] = (traj['base_actions'] - label_means) / label_stds
+        else:
+            traj['base_actions'] = traj['base_actions'] / label_stds
         traj['expert_actions'] = (traj['expert_actions'] - label_means) / label_stds
 
     save_dict = {

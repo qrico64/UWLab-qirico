@@ -123,7 +123,7 @@ class RobotTransformerPolicy(nn.Module):
         elif self.policy_cfg["infer_mode"] == "res_scale_shift":
             scale = output[:, :self.policy_cfg["label_dim"]]
             shift = output[:, self.policy_cfg["label_dim"]:]
-            new_actions = base_actions + shift
+            new_actions = base_actions * torch.exp(scale) + shift
         return new_actions
 
 
@@ -208,7 +208,10 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         eps = 1e-8
         context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
         current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
-        base_actions = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
+        if self.save_dict["infer_mode"] == "res_scale_shift":
+            base_actions = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
+        else:
+            base_actions = base_actions / self.label_stds.clamp_min(eps)
 
         out_n = self.model(context_n, current_n, base_actions, padding_mask=padding_mask)
         out = out_n * self.label_stds + self.label_means
