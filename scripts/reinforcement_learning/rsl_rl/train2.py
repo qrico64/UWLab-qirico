@@ -175,7 +175,8 @@ def train_behavior_cloning(
         collate_fn=collate_fn, pin_memory=True
     )
 
-    SAVE_INTERVAL = 50 if train_mode != "expert" else 10
+    assert epochs % 5 == 0, f"epochs={epochs} must be divisible by 5"
+    SAVE_INTERVAL = epochs // 5
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     criterion = nn.MSELoss()

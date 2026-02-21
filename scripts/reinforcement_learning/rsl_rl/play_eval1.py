@@ -274,6 +274,10 @@ def evaluate_model(
         general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=device) / 5
     else:
         general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=device)
+    if BASE_POLICY_FILE is not None:
+        correction_model_info['sys_noise_scale'] = 0
+        correction_model_info['obs_receptive_noise_scale'] = 0
+        correction_model_info['obs_insertive_noise_scale'] = 0
     sys_noises = torch.randn(N, A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
     print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
     obs_receptive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
