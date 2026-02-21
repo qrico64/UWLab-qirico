@@ -238,9 +238,10 @@ def evaluate_model(
     CORRECTION_MODEL_FILE = pathlib.Path(correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
-    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / reset_mode
+    temp_viz_directory_end = reset_mode + (f"-base_policy" if base_policy is not None else "")
+    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
     if no_viz:
-        VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / reset_mode
+        VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
     correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
     
@@ -440,6 +441,9 @@ def evaluate_model(
     print(f"Base policy at {BASE_POLICY_FILE}")
     final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
     with open(VIZ_DIRECTORY / "final_success_rate.txt", 'w') as f:
+        f.write(f"{CORRECTION_MODEL_FILE}\n")
+        f.write(f"{BASE_POLICY_FILE}\n")
+        f.write(f"{count_success.tolist()}\n")
         f.write(f"{final_success_rate}")
     return final_success_rate
 
@@ -589,8 +593,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 no_viz=args_cli.no_viz,
             )
             success_rates.append(success_rate)
+        
         print(checkpoints)
         print(success_rates)
+        with open(correction_model_file / "viz" / "success_rate_over_checkpoints.txt", 'w') as f:
+            for ckpt, rate in zip(checkpoints, success_rates):
+                f.write(f"{ckpt} {rate}\n")
+
         fig, ax = plt.subplots()
         ax.plot(checkpoints, success_rates, marker='o')
         ax.set_xlabel("Checkpoint")
