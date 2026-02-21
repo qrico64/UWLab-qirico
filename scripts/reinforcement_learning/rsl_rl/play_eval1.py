@@ -238,7 +238,7 @@ def evaluate_model(
     CORRECTION_MODEL_FILE = pathlib.Path(correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
-    temp_viz_directory_end = reset_mode + (f"-base_policy" if base_policy is not None else "")
+    temp_viz_directory_end = reset_mode + ("-" + BASE_POLICY_FILE.parent.name if BASE_POLICY_FILE is not None else "")
     VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
     if no_viz:
         VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end

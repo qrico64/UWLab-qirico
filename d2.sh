@@ -23,6 +23,10 @@ apptainer exec --nv \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
+
+export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb21/expert_new_base_rand5/17-ckpt.pt
+export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb18/fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000_scaleandshift/1000-ckpt.pt
+
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
   --checkpoint peg_state_rl_expert.pt \
@@ -31,7 +35,7 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 100 \
   --num_evals 5000 \
-  --base_policy /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt \
-  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb18/fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000_scaleandshift/1000-ckpt.pt \
+  --base_policy $BASE_POLICY \
+  --correction_model $CORRECTION_MODEL \
   --reset_mode xleq035 \
 '
