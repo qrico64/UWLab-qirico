@@ -31,14 +31,6 @@ class IndependentTrajectoryDataset(Dataset):
         """
         self.data = data
 
-        # 2. Flatten all states from ALL trajectories for 'current' sampling
-        self.all_currents = []
-        for traj in data:
-            # We take the current states from all trajectories, even unchoosable ones
-            self.all_currents.append(traj['current'])
-        
-        self.all_currents = np.concatenate(self.all_currents, axis=0)
-
         self.train_mode = train_mode
         if train_mode == "closest-neighbors":
             assert closest_neighbors_radius > 0
@@ -65,14 +57,30 @@ class IndependentTrajectoryDataset(Dataset):
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
         elif train_mode == "full-traj":
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
+        elif train_mode == "expert":
+            self.choosable_trajs = []
+            self.context_dim = data[0]['context'].shape[-1]
+            self.current_dim = data[0]['current'].shape[-1]
+            self.action_dim = data[0]['expert_actions'].shape[-1]
+            self.choosable_currents = np.concatenate([traj['current'] for traj in data if traj.get('choosable', False)], axis=0)
+            self.corresponding_expert_actions = np.concatenate([traj['expert_actions'] for traj in data if traj.get('choosable', False)], axis=0)
         else:
             raise NotImplementedError(train_mode)
 
     def __len__(self):
-        # The epoch length is defined by how many choosable demonstration sequences we have
-        return len(self.choosable_trajs)
+        if self.train_mode == "expert":
+            return self.choosable_currents.shape[0]
+        else:
+            return len(self.choosable_trajs)
 
     def __getitem__(self, idx):
+        if self.train_mode == "expert":
+            fake_context = torch.zeros(1, self.context_dim, dtype=torch.float32)
+            current = torch.tensor(self.choosable_currents[idx], dtype=torch.float32)
+            fake_base_action = torch.zeros(self.action_dim, dtype=torch.float32)
+            expert_action = torch.tensor(self.corresponding_expert_actions[idx], dtype=torch.float32)
+            return fake_context, current, fake_base_action, expert_action
+
         # Get the context and label from a "choosable" trajectory
         traj = self.choosable_trajs[idx]
 
@@ -167,6 +175,8 @@ def train_behavior_cloning(
         collate_fn=collate_fn, pin_memory=True
     )
 
+    SAVE_INTERVAL = 50 if train_mode != "expert" else 10
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     criterion = nn.MSELoss()
     # Learning rate scheduler for better convergence
@@ -229,13 +239,13 @@ def train_behavior_cloning(
                 "lr": optimizer.param_groups[0]['lr']
             })
         
-        if epoch % 50 == 49 and save_path is not None:
+        if (epoch + 1) % SAVE_INTERVAL == 0 and save_path is not None:
             csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
             torch.save(model.state_dict(), csp)
             print(f"Model at epoch {epoch} saved to {csp}")
             fixed_epochs.append(epoch)
         
-        if epoch > 40 and avg_val_loss < best_loss and save_path is not None and epoch not in fixed_epochs:
+        if epoch > SAVE_INTERVAL - 10 and avg_val_loss < best_loss and save_path is not None and epoch not in fixed_epochs:
             best_loss = avg_val_loss
             if best_loss_epoch not in fixed_epochs:
                 csp = os.path.join(save_path, f"{best_loss_epoch}-ckpt.pt")
@@ -311,11 +321,13 @@ def main():
     INSERTIVE_LOW = np.array([args.insertive_xlow, args.insertive_ylow])
     INSERTIVE_HIGH = np.array([args.insertive_xhigh, args.insertive_yhigh])
 
-    if args.infer_mode == "expert":
-        assert args.train_mode in ["autoregressive", "full-traj"]
+    TRAIN_EXPERT = args.infer_mode in ["expert", "expert_new"]
+    if TRAIN_EXPERT:
+        assert args.infer_mode == "expert_new", "expert is deprecated."
+        assert args.train_mode in ["expert"]
 
     if ENABLE_WANDB:
-        WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not args.infer_mode == "expert" else "robot-mlp-bc"
+        WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not TRAIN_EXPERT else "robot-mlp-bc"
         wandb.init(project=WANDB_PROJECT, config=vars(args))
     
     DATASET_PATH = args.dataset_path
@@ -351,8 +363,6 @@ def main():
         if 'rand_noise' in traj.keys():
             traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]
             processed_traj['context'][:, CURRENT_DIM:] += traj['rand_noise']
-        if args.infer_mode == "expert":
-            processed_traj['context'] *= 0
         
         processed_data.append(processed_traj)
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
@@ -366,7 +376,7 @@ def main():
     all_contexts = np.concatenate([traj['context'] for traj in processed_data], axis=0)
     context_means = all_contexts.mean(axis=0)
     context_stds = all_contexts.std(axis=0) + 1e-9
-    if args.infer_mode == "expert":
+    if TRAIN_EXPERT:
         all_labels = np.concatenate([traj['expert_actions'] for traj in processed_data], axis=0)
     elif args.infer_mode == "res_scale_shift":
         all_labels = np.concatenate([traj['expert_actions'] for traj in processed_data] + [traj['base_actions'] for traj in processed_data], axis=0)
@@ -403,7 +413,7 @@ def main():
         'closest_neighbors_radius': args.closest_neighbors_radius,
         'warm_start': args.warm_start,
         'train_percent': args.train_percent,
-        'train_expert': args.infer_mode == "expert",
+        'train_expert': TRAIN_EXPERT,
 
         'use_new_head_arch': args.use_new_head_arch,
         'num_head_layers': args.num_head_layers,

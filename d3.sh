@@ -18,18 +18,18 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
 
 # python scripts/reinforcement_learning/rsl_rl/train2.py \
 #     --lr 0.0003 \
-#     --epochs 300 \
+#     --epochs 80 \
 #     --num_layers 4 \
 #     --d_model 512 \
 #     --dropout 0.1 \
 #     --batch_size 256 \
-#     --save_path experiments/feb13/expert-fulltraj-ds_random5-receptive_x_geq_05-5layers_x4_relu \
+#     --save_path experiments/feb21/expert_new_base_rand5_dropout \
 #     --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb7/expertcol4/job-True-0.0-5.0-100000-60--0.0-0.0/cut-trajectories.pkl \
-#     --train_mode full-traj \
+#     --train_mode expert \
 #     --closest_neighbors_radius 0.001 \
-#     --warm_start 10 \
+#     --warm_start 5 \
 #     --train_percent 0.8 \
-#     --train_expert \
+#     --infer_mode expert_new \
 #     \
 #     --use_new_head_arch \
 #     --num_head_layers 5 \

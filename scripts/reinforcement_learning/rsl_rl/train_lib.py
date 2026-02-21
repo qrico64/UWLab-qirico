@@ -71,10 +71,11 @@ class RobotTransformerPolicy(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
 
         # head
+        head_in_dim = current_dim if infer_mode == "expert_new" else d_model * 2
         head_out_dim = label_dim * 2 if infer_mode == "res_scale_shift" else label_dim
         if not use_new_head_arch:
             self.head = nn.Sequential(
-                nn.Linear(d_model * 2, d_model * 2),
+                nn.Linear(head_in_dim, d_model * 2),
                 nn.ReLU(),
                 nn.Linear(d_model * 2, d_model),
                 nn.ReLU(),
@@ -82,7 +83,7 @@ class RobotTransformerPolicy(nn.Module):
             )
         else:
             assert num_head_layers >= 3
-            head_layers = block(d_model * 2, d_model_head, dropout)
+            head_layers = block(head_in_dim, d_model_head, dropout)
             for _ in range(num_head_layers - 3):
                 head_layers += block(d_model_head, d_model_head, dropout)
             head_layers += block(d_model_head, d_model, dropout)
@@ -96,6 +97,10 @@ class RobotTransformerPolicy(nn.Module):
         print()
 
     def forward(self, context, current, base_actions, padding_mask=None):
+        if self.policy_cfg["infer_mode"] == "expert_new":
+            output = self.head(current)
+            return output
+
         ctx_emb = self.ctx_norm(self.context_proj(context))
         ctx_emb = self.pos_encoder(ctx_emb)
         
@@ -124,6 +129,9 @@ class RobotTransformerPolicy(nn.Module):
             scale = output[:, :self.policy_cfg["label_dim"]]
             shift = output[:, self.policy_cfg["label_dim"]:]
             new_actions = base_actions * torch.exp(scale) + shift
+        else:
+            raise NotImplementedError(f"Unknown infer_mode: {self.policy_cfg['infer_mode']}")
+        
         return new_actions
 
 

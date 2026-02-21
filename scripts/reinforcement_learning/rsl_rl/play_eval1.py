@@ -249,7 +249,7 @@ def evaluate_model(
     assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
     assert correction_model_info['label_dim'] == A_DIM
 
-    TRAIN_EXPERT = correction_model_info['train_expert']
+    TRAIN_EXPERT = correction_model_info['infer_mode'] in ["expert", "expert_new"]
 
     N_DIM = 2
     completed_reset = torch.full((N,), not need_reset_envs, dtype=torch.bool, device=device)
