@@ -28,6 +28,20 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, :x.size(1)]
         return x
 
+class MLPBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout=0.0):
+        super().__init__()
+        listofmodules = [
+            nn.Linear(in_dim, out_dim),
+            nn.ReLU(),
+        ]
+        if dropout > 1e-6:
+            listofmodules.append(nn.Dropout(dropout))
+        self.net = nn.Sequential(*listofmodules)
+
+    def forward(self, x):
+        return self.net(x)
+
 def block(in_dim: int, out_dim: int, dropout: float) -> list[nn.Module]:
     return [
         nn.Linear(in_dim, out_dim),
@@ -37,9 +51,10 @@ def block(in_dim: int, out_dim: int, dropout: float) -> list[nn.Module]:
 class RobotTransformerPolicy(nn.Module):
     def __init__(
             self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=512, dropout=0.1,
-            use_new_head_arch=False,
+            head_arch_version="blocked", # Options: "ancient", "blocked", "mlpblock_v1"
             num_head_layers=3,
             d_model_head=1024,
+            dropout_head=0,
             infer_mode: str = "residual", # Options: "residual", "expert", "res_scale_shift".
         ):
         super().__init__()
@@ -52,7 +67,7 @@ class RobotTransformerPolicy(nn.Module):
             num_layers=num_layers,
             d_model=d_model,
             dropout=dropout,
-            use_new_head_arch=use_new_head_arch,
+            head_arch_version=head_arch_version,
             num_head_layers=num_head_layers,
             d_model_head=d_model_head,
             infer_mode=infer_mode,
@@ -73,7 +88,7 @@ class RobotTransformerPolicy(nn.Module):
         # head
         head_in_dim = current_dim if infer_mode == "expert_new" else d_model * 2
         head_out_dim = label_dim * 2 if infer_mode == "res_scale_shift" else label_dim
-        if not use_new_head_arch:
+        if head_arch_version == "ancient":
             self.head = nn.Sequential(
                 nn.Linear(head_in_dim, d_model * 2),
                 nn.ReLU(),
@@ -81,7 +96,7 @@ class RobotTransformerPolicy(nn.Module):
                 nn.ReLU(),
                 nn.Linear(d_model, head_out_dim)
             )
-        else:
+        elif head_arch_version == "blocked":
             assert num_head_layers >= 3
             head_layers = block(head_in_dim, d_model_head, dropout)
             for _ in range(num_head_layers - 3):
@@ -89,6 +104,16 @@ class RobotTransformerPolicy(nn.Module):
             head_layers += block(d_model_head, d_model, dropout)
             head_layers += [nn.Linear(d_model, head_out_dim)]
             self.head = nn.Sequential(*head_layers)
+        elif head_arch_version == "mlpblock_v1":
+            assert num_head_layers >= 3
+            head_layers = MLPBlock(head_in_dim, d_model_head, dropout_head)
+            for _ in range(num_head_layers - 3):
+                head_layers += MLPBlock(d_model_head, d_model_head, dropout_head)
+            head_layers += MLPBlock(d_model_head, d_model, dropout_head)
+            head_layers += [nn.Linear(d_model, head_out_dim)]
+            self.head = nn.Sequential(*head_layers)
+        else:
+            raise NotImplementedError(f"Unknown head_arch_version: {head_arch_version}")
         print()
         print("****** Creating Transformer Policy ******")
         print("Head:")
@@ -107,12 +132,8 @@ class RobotTransformerPolicy(nn.Module):
         # padding_mask: (Batch, Seq_Len)
         ctx_out = self.transformer(ctx_emb, src_key_padding_mask=padding_mask)
         
-        # IMPORTANT: When pooling, we must ignore the padded values
         if padding_mask is not None:
-            # Mask the output to 0 before averaging
-            # ~padding_mask.unsqueeze(-1) flips True/False and adds a dim
             ctx_out = ctx_out.masked_fill(padding_mask.unsqueeze(-1), 0.0)
-            # Calculate actual lengths to get a true mean
             lengths = (~padding_mask).sum(dim=1, keepdim=True)
             ctx_agg = ctx_out.sum(dim=1) / lengths
         else:
@@ -157,9 +178,11 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "use_new_head_arch": False,
             "num_head_layers": 2,
             "d_model_head": 1024,
+            "dropout_head": 0.0,
         } | save_dict
         save_dict = {
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
+            "head_arch_version": "blocked" if save_dict["use_new_head_arch"] else "ancient",
         } | save_dict
         self.save_dict = save_dict
 
@@ -171,10 +194,11 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             num_layers=save_dict["num_layers"],
             d_model=save_dict["d_model"],
             dropout=save_dict["dropout"],
-            use_new_head_arch=save_dict["use_new_head_arch"],
+            head_arch_version=save_dict["head_arch_version"],
             num_head_layers=save_dict["num_head_layers"],
             d_model_head=save_dict["d_model_head"],
             infer_mode=save_dict["infer_mode"],
+            dropout_head=save_dict["dropout_head"],
         )
 
         # load weights

@@ -285,9 +285,10 @@ def main():
     parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
 
     # Head architecture
-    parser.add_argument("--use_new_head_arch", action="store_true", default=False, help="Whether we're using LayerNorm + SiLU + Dropout.")
+    parser.add_argument("--head_arch_version", type=str, default="ancient", help="Options: ancient, blocked, mlpblock_v1.")
     parser.add_argument("--num_head_layers", type=int, default=3, help="Number of Linear layers in the head.")
     parser.add_argument("--d_model_head", type=int, default=1024, help="Size of each Linear layer in the head.")
+    parser.add_argument("--dropout_head", type=float, default=0.0, help="Dropout rate for head layers.")
 
     # All the bounds
     parser.add_argument("--receptive_xlow", type=float, default=0.3, help="Lower bound of receptive x position.")
@@ -416,9 +417,10 @@ def main():
         'train_percent': args.train_percent,
         'train_expert': TRAIN_EXPERT,
 
-        'use_new_head_arch': args.use_new_head_arch,
+        'head_arch_version': args.head_arch_version,
         'num_head_layers': args.num_head_layers,
         'd_model_head': args.d_model_head,
+        'dropout_head': args.dropout_head,
 
         'receptive_low': RECEPTIVE_LOW,
         'receptive_high': RECEPTIVE_HIGH,
@@ -487,9 +489,10 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = RobotTransformerPolicy(
         CONTEXT_DIM, CURRENT_DIM, LABEL_DIM, num_layers=NUM_LAYERS, d_model=D_MODEL, dropout=DROPOUT,
-        use_new_head_arch=args.use_new_head_arch,
+        head_arch_version=args.head_arch_version,
         num_head_layers=args.num_head_layers,
         d_model_head=args.d_model_head,
+        dropout_head=args.dropout_head,
         infer_mode=args.infer_mode,
     )
     model.to(device)
