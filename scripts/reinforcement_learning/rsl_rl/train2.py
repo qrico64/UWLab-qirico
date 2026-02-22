@@ -206,8 +206,7 @@ def train_behavior_cloning(
             padding_mask = padding_mask.to(device)
             
             optimizer.zero_grad()
-            pred = model(context, current, base_actions, padding_mask)
-            loss = criterion(pred, expert_actions)
+            loss = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
             
             loss.backward()
             optimizer.step()
@@ -222,8 +221,7 @@ def train_behavior_cloning(
             for context, current, base_actions, expert_actions, padding_mask in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
-                pred = model(context, current, base_actions, padding_mask)
-                vloss = criterion(pred, expert_actions)
+                vloss = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
                 val_loss += vloss.item()
 
         avg_train_loss = train_loss / len(train_loader)

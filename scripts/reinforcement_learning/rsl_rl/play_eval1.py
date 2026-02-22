@@ -222,14 +222,15 @@ def evaluate_model(
 
     # Rico: Instantiate base policy!!
     BASE_POLICY_FILE = pathlib.Path(base_policy) if base_policy is not None else None
+    expert_policy = policy
     if base_policy is not None:
         base_policy, base_policy_info = load_robot_policy(base_policy, device=device)
         assert base_policy_info['train_expert']
-        policy = lambda temp_currents: base_policy(
+        policy = lambda temp_currents: base_policy.get_action(
             torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
             temp_currents['policy2'],
             torch.zeros(len(temp_currents), T_DIM, base_policy_info['label_dim'], device=device),
-            torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
+            padding_mask=torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
         )
     
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
@@ -305,7 +306,7 @@ def evaluate_model(
     while count_success.sum() < num_evals:
         global_timestep += 1
         with torch.inference_mode():
-            expert_actions = policy(obs)
+            expert_actions = expert_policy(obs)
 
             obs_tweaked = obs.clone()
             receptive_noise = obs_receptive_noise
@@ -327,7 +328,7 @@ def evaluate_model(
                 currents = obs['policy2'][need_residuals].clone()
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
                 cur_base_actions = base_actions[need_residuals].clone()
-                residual_actions = correction_model(contexts, currents, cur_base_actions, padding_mask)
+                residual_actions = correction_model.get_action(contexts, currents, cur_base_actions, padding_mask)
                 base_actions[need_residuals, :] = residual_actions
             if TRAIN_EXPERT:
                 base_actions[curstates == 0] *= 0
