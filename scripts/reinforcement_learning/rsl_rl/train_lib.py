@@ -56,6 +56,9 @@ class RobotTransformerPolicy(nn.Module):
             d_model_head=1024,
             dropout_head=0,
             infer_mode: str = "residual", # Options: "residual", "expert", "res_scale_shift".
+            mu_head_arch: str = "none", # Options: "none", "identity", "linear", "2layer".
+            mu_size: int = 512,
+            mu_kl_factor: float = 0.0,
         ):
         super().__init__()
 
@@ -71,6 +74,9 @@ class RobotTransformerPolicy(nn.Module):
             num_head_layers=num_head_layers,
             d_model_head=d_model_head,
             infer_mode=infer_mode,
+            mu_head_arch=mu_head_arch,
+            mu_size=mu_size,
+            mu_kl_factor=mu_kl_factor,
         )
 
         self.context_proj = nn.Linear(context_dim, d_model)
@@ -85,8 +91,24 @@ class RobotTransformerPolicy(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
 
+        if mu_head_arch == "none":
+            assert mu_size == d_model, f"{mu_size} != {d_model}"
+        elif mu_head_arch == "identity":
+            assert mu_size * 2 == d_model, f"{mu_size} * 2 != {d_model}"
+            self.mu_head = nn.Identity()
+        elif mu_head_arch == "linear":
+            self.mu_head = nn.Linear(d_model, mu_size * 2)
+        elif mu_head_arch == "2layer":
+            self.mu_head = nn.Sequential(
+                nn.Linear(d_model, d_model * 2),
+                nn.ReLU(),
+                nn.Linear(d_model * 2, mu_size * 2),
+            )
+        else:
+            raise NotImplementedError(f"Unknown mu_head_arch: {mu_head_arch}")
+
         # head
-        head_in_dim = current_dim if infer_mode == "expert_new" else d_model * 2
+        head_in_dim = current_dim if infer_mode == "expert_new" else d_model + mu_size
         head_out_dim = label_dim * 2 if infer_mode == "res_scale_shift" else label_dim
         if head_arch_version == "ancient":
             self.head = nn.Sequential(
@@ -142,15 +164,32 @@ class RobotTransformerPolicy(nn.Module):
 
     def loss(self, context, current, base_actions, expert_actions, padding_mask=None):
         loss = 0
+        info = {}
 
         if self.policy_cfg["infer_mode"] == "expert_new":
             new_actions = self.head(current)
         else:
             ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+            if self.policy_cfg["mu_head_arch"] == "none":
+                mu_emb = ctx_agg
+            else:
+                mu = self.mu_head(ctx_agg)
+                mu_mean = mu[:, :self.policy_cfg["mu_size"]]
+                mu_logvar = mu[:, self.policy_cfg["mu_size"]:]
+                mu_logvar = torch.clamp(mu_logvar, -20, 20)
+                kl_loss = -0.5 * torch.sum(1 + mu_logvar - mu_mean.pow(2) - mu_logvar.exp(), dim=-1).mean()
+                loss += self.policy_cfg["mu_kl_factor"] * kl_loss
+                info = info | {
+                    "kl_loss": self.policy_cfg["mu_kl_factor"] * kl_loss.item(),
+                    "mu_kl_factor": self.policy_cfg["mu_kl_factor"],
+                }
+                mu_std = torch.exp(0.5 * mu_logvar)
+                eps = torch.randn_like(mu_mean)
+                mu_emb = mu_mean + eps * mu_std
                 
             # head stuff
             curr_emb = self.curr_norm(self.current_proj(current))
-            combined = torch.cat([ctx_agg, curr_emb], dim=-1)
+            combined = torch.cat([mu_emb, curr_emb], dim=-1)
             output = self.head(combined)
             if self.policy_cfg["infer_mode"] == "expert":
                 new_actions = output
@@ -165,8 +204,12 @@ class RobotTransformerPolicy(nn.Module):
         
         loss_mse = F.mse_loss(new_actions, expert_actions)
         loss += loss_mse
+        info = info | {
+            "loss_mse": loss_mse.item(),
+            "loss": loss.item(),
+        }
         
-        return loss
+        return loss, info
 
     def get_action(self, context, current, base_actions, padding_mask=None):
         with torch.no_grad():
@@ -174,10 +217,16 @@ class RobotTransformerPolicy(nn.Module):
                 new_actions = self.head(current)
             else:
                 ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+                if self.policy_cfg["mu_head_arch"] == "none":
+                    mu_emb = ctx_agg
+                else:
+                    mu = self.mu_head(ctx_agg)
+                    mu_mean = mu[:, :self.policy_cfg["mu_size"]]
+                    mu_emb = mu_mean
                     
                 # head stuff
                 curr_emb = self.curr_norm(self.current_proj(current))
-                combined = torch.cat([ctx_agg, curr_emb], dim=-1)
+                combined = torch.cat([mu_emb, curr_emb], dim=-1)
                 output = self.head(combined)
                 if self.policy_cfg["infer_mode"] == "expert":
                     new_actions = output
@@ -215,6 +264,9 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "num_head_layers": 2,
             "d_model_head": 1024,
             "dropout_head": 0.0,
+            "mu_head_arch": "none",
+            "mu_size": 512,
+            "mu_kl_factor": 0.0,
         } | save_dict
         save_dict = {
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
@@ -235,6 +287,9 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             d_model_head=save_dict["d_model_head"],
             infer_mode=save_dict["infer_mode"],
             dropout_head=save_dict["dropout_head"],
+            mu_head_arch=save_dict["mu_head_arch"],
+            mu_size=save_dict["mu_size"],
+            mu_kl_factor=save_dict["mu_kl_factor"],
         )
 
         # load weights
