@@ -28,6 +28,20 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, :x.size(1)]
         return x
 
+class MLPBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout=0.0):
+        super().__init__()
+        listofmodules = [
+            nn.Linear(in_dim, out_dim),
+            nn.ReLU(),
+        ]
+        if dropout > 1e-6:
+            listofmodules.append(nn.Dropout(dropout))
+        self.net = nn.Sequential(*listofmodules)
+
+    def forward(self, x):
+        return self.net(x)
+
 def block(in_dim: int, out_dim: int, dropout: float) -> list[nn.Module]:
     return [
         nn.Linear(in_dim, out_dim),
@@ -37,10 +51,14 @@ def block(in_dim: int, out_dim: int, dropout: float) -> list[nn.Module]:
 class RobotTransformerPolicy(nn.Module):
     def __init__(
             self, context_dim, current_dim, label_dim, nhead=8, num_layers=4, d_model=512, dropout=0.1,
-            use_new_head_arch=False,
+            head_arch_version="blocked", # Options: "ancient", "blocked", "mlpblock_v1"
             num_head_layers=3,
             d_model_head=1024,
+            dropout_head=0,
             infer_mode: str = "residual", # Options: "residual", "expert", "res_scale_shift".
+            mu_head_arch: str = "none", # Options: "none", "identity", "linear", "2layer".
+            mu_size: int = 512,
+            mu_kl_factor: float = 0.0,
         ):
         super().__init__()
 
@@ -52,10 +70,13 @@ class RobotTransformerPolicy(nn.Module):
             num_layers=num_layers,
             d_model=d_model,
             dropout=dropout,
-            use_new_head_arch=use_new_head_arch,
+            head_arch_version=head_arch_version,
             num_head_layers=num_head_layers,
             d_model_head=d_model_head,
             infer_mode=infer_mode,
+            mu_head_arch=mu_head_arch,
+            mu_size=mu_size,
+            mu_kl_factor=mu_kl_factor,
         )
 
         self.context_proj = nn.Linear(context_dim, d_model)
@@ -70,10 +91,26 @@ class RobotTransformerPolicy(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
 
+        if mu_head_arch == "none":
+            assert mu_size == d_model, f"{mu_size} != {d_model}"
+        elif mu_head_arch == "identity":
+            assert mu_size * 2 == d_model, f"{mu_size} * 2 != {d_model}"
+            self.mu_head = nn.Identity()
+        elif mu_head_arch == "linear":
+            self.mu_head = nn.Linear(d_model, mu_size * 2)
+        elif mu_head_arch == "2layer":
+            self.mu_head = nn.Sequential(
+                nn.Linear(d_model, d_model * 2),
+                nn.ReLU(),
+                nn.Linear(d_model * 2, mu_size * 2),
+            )
+        else:
+            raise NotImplementedError(f"Unknown mu_head_arch: {mu_head_arch}")
+
         # head
-        head_in_dim = current_dim if infer_mode == "expert_new" else d_model * 2
+        head_in_dim = current_dim if infer_mode == "expert_new" else d_model + mu_size
         head_out_dim = label_dim * 2 if infer_mode == "res_scale_shift" else label_dim
-        if not use_new_head_arch:
+        if head_arch_version == "ancient":
             self.head = nn.Sequential(
                 nn.Linear(head_in_dim, d_model * 2),
                 nn.ReLU(),
@@ -81,7 +118,7 @@ class RobotTransformerPolicy(nn.Module):
                 nn.ReLU(),
                 nn.Linear(d_model, head_out_dim)
             )
-        else:
+        elif head_arch_version == "blocked":
             assert num_head_layers >= 3
             head_layers = block(head_in_dim, d_model_head, dropout)
             for _ in range(num_head_layers - 3):
@@ -89,6 +126,16 @@ class RobotTransformerPolicy(nn.Module):
             head_layers += block(d_model_head, d_model, dropout)
             head_layers += [nn.Linear(d_model, head_out_dim)]
             self.head = nn.Sequential(*head_layers)
+        elif head_arch_version == "mlpblock_v1":
+            assert num_head_layers >= 3
+            head_layers = [MLPBlock(head_in_dim, d_model_head, dropout_head)]
+            for _ in range(num_head_layers - 3):
+                head_layers += [MLPBlock(d_model_head, d_model_head, dropout_head)]
+            head_layers += [MLPBlock(d_model_head, d_model, dropout_head)]
+            head_layers += [nn.Linear(d_model, head_out_dim)]
+            self.head = nn.Sequential(*head_layers)
+        else:
+            raise NotImplementedError(f"Unknown head_arch_version: {head_arch_version}")
         print()
         print("****** Creating Transformer Policy ******")
         print("Head:")
@@ -97,41 +144,100 @@ class RobotTransformerPolicy(nn.Module):
         print()
 
     def forward(self, context, current, base_actions, padding_mask=None):
-        if self.policy_cfg["infer_mode"] == "expert_new":
-            output = self.head(current)
-            return output
+        return torch.zeros_like(base_actions)
 
+    def forward_transformer(self, context, padding_mask=None):
         ctx_emb = self.ctx_norm(self.context_proj(context))
         ctx_emb = self.pos_encoder(ctx_emb)
         
         # padding_mask: (Batch, Seq_Len)
         ctx_out = self.transformer(ctx_emb, src_key_padding_mask=padding_mask)
         
-        # IMPORTANT: When pooling, we must ignore the padded values
         if padding_mask is not None:
-            # Mask the output to 0 before averaging
-            # ~padding_mask.unsqueeze(-1) flips True/False and adds a dim
             ctx_out = ctx_out.masked_fill(padding_mask.unsqueeze(-1), 0.0)
-            # Calculate actual lengths to get a true mean
             lengths = (~padding_mask).sum(dim=1, keepdim=True)
             ctx_agg = ctx_out.sum(dim=1) / lengths
         else:
             ctx_agg = torch.mean(ctx_out, dim=1)
-            
-        curr_emb = self.curr_norm(self.current_proj(current))
-        combined = torch.cat([ctx_agg, curr_emb], dim=-1)
-        output = self.head(combined)
-        if self.policy_cfg["infer_mode"] == "expert":
-            new_actions = output
-        elif self.policy_cfg["infer_mode"] == "residual":
-            new_actions = base_actions + output
-        elif self.policy_cfg["infer_mode"] == "res_scale_shift":
-            scale = output[:, :self.policy_cfg["label_dim"]]
-            shift = output[:, self.policy_cfg["label_dim"]:]
-            new_actions = base_actions * torch.exp(scale) + shift
-        else:
-            raise NotImplementedError(f"Unknown infer_mode: {self.policy_cfg['infer_mode']}")
         
+        return ctx_agg
+
+    def loss(self, context, current, base_actions, expert_actions, padding_mask=None):
+        loss = 0
+        info = {}
+
+        if self.policy_cfg["infer_mode"] == "expert_new":
+            new_actions = self.head(current)
+        else:
+            ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+            if self.policy_cfg["mu_head_arch"] == "none":
+                mu_emb = ctx_agg
+            else:
+                mu = self.mu_head(ctx_agg)
+                mu_mean = mu[:, :self.policy_cfg["mu_size"]]
+                mu_logvar = mu[:, self.policy_cfg["mu_size"]:]
+                mu_logvar = torch.clamp(mu_logvar, -20, 20)
+                kl_loss = -0.5 * torch.sum(1 + mu_logvar - mu_mean.pow(2) - mu_logvar.exp(), dim=-1).mean()
+                loss += self.policy_cfg["mu_kl_factor"] * kl_loss
+                info = info | {
+                    "kl_loss": self.policy_cfg["mu_kl_factor"] * kl_loss.item(),
+                    "mu_kl_factor": self.policy_cfg["mu_kl_factor"],
+                }
+                mu_std = torch.exp(0.5 * mu_logvar)
+                eps = torch.randn_like(mu_mean)
+                mu_emb = mu_mean + eps * mu_std
+                
+            # head stuff
+            curr_emb = self.curr_norm(self.current_proj(current))
+            combined = torch.cat([mu_emb, curr_emb], dim=-1)
+            output = self.head(combined)
+            if self.policy_cfg["infer_mode"] == "expert":
+                new_actions = output
+            elif self.policy_cfg["infer_mode"] == "residual":
+                new_actions = base_actions + output
+            elif self.policy_cfg["infer_mode"] == "res_scale_shift":
+                scale = output[:, :self.policy_cfg["label_dim"]]
+                shift = output[:, self.policy_cfg["label_dim"]:]
+                new_actions = base_actions * torch.exp(scale) + shift
+            else:
+                raise NotImplementedError(f"Unknown infer_mode: {self.policy_cfg['infer_mode']}")
+        
+        loss_mse = F.mse_loss(new_actions, expert_actions)
+        loss += loss_mse
+        info = info | {
+            "loss_mse": loss_mse.item(),
+            "loss": loss.item(),
+        }
+        
+        return loss, info
+
+    def get_action(self, context, current, base_actions, padding_mask=None):
+        with torch.no_grad():
+            if self.policy_cfg["infer_mode"] == "expert_new":
+                new_actions = self.head(current)
+            else:
+                ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+                if self.policy_cfg["mu_head_arch"] == "none":
+                    mu_emb = ctx_agg
+                else:
+                    mu = self.mu_head(ctx_agg)
+                    mu_mean = mu[:, :self.policy_cfg["mu_size"]]
+                    mu_emb = mu_mean
+                    
+                # head stuff
+                curr_emb = self.curr_norm(self.current_proj(current))
+                combined = torch.cat([mu_emb, curr_emb], dim=-1)
+                output = self.head(combined)
+                if self.policy_cfg["infer_mode"] == "expert":
+                    new_actions = output
+                elif self.policy_cfg["infer_mode"] == "residual":
+                    new_actions = base_actions + output
+                elif self.policy_cfg["infer_mode"] == "res_scale_shift":
+                    scale = output[:, :self.policy_cfg["label_dim"]]
+                    shift = output[:, self.policy_cfg["label_dim"]:]
+                    new_actions = base_actions * torch.exp(scale) + shift
+                else:
+                    raise NotImplementedError(f"Unknown infer_mode: {self.policy_cfg['infer_mode']}")
         return new_actions
 
 
@@ -157,9 +263,14 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "use_new_head_arch": False,
             "num_head_layers": 2,
             "d_model_head": 1024,
+            "dropout_head": 0.0,
+            "mu_head_arch": "none",
+            "mu_size": 512,
+            "mu_kl_factor": 0.0,
         } | save_dict
         save_dict = {
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
+            "head_arch_version": "blocked" if save_dict["use_new_head_arch"] else "ancient",
         } | save_dict
         self.save_dict = save_dict
 
@@ -171,10 +282,14 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             num_layers=save_dict["num_layers"],
             d_model=save_dict["d_model"],
             dropout=save_dict["dropout"],
-            use_new_head_arch=save_dict["use_new_head_arch"],
+            head_arch_version=save_dict["head_arch_version"],
             num_head_layers=save_dict["num_head_layers"],
             d_model_head=save_dict["d_model_head"],
             infer_mode=save_dict["infer_mode"],
+            dropout_head=save_dict["dropout_head"],
+            mu_head_arch=save_dict["mu_head_arch"],
+            mu_size=save_dict["mu_size"],
+            mu_kl_factor=save_dict["mu_kl_factor"],
         )
 
         # load weights
@@ -222,6 +337,23 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             base_actions = base_actions / self.label_stds.clamp_min(eps)
 
         out_n = self.model(context_n, current_n, base_actions, padding_mask=padding_mask)
+        out = out_n * self.label_stds + self.label_means
+        return out
+    
+    def get_action(self, context, current, base_actions, padding_mask=None):
+        context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
+        current = torch.as_tensor(current, device=self.device, dtype=torch.float32)
+        base_actions = torch.as_tensor(base_actions, device=self.device, dtype=torch.float32)
+
+        eps = 1e-8
+        context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
+        current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
+        if self.save_dict["infer_mode"] == "res_scale_shift":
+            base_actions = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
+        else:
+            base_actions = base_actions / self.label_stds.clamp_min(eps)
+
+        out_n = self.model.get_action(context_n, current_n, base_actions, padding_mask=padding_mask)
         out = out_n * self.label_stds + self.label_means
         return out
 

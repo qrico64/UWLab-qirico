@@ -200,31 +200,40 @@ def train_behavior_cloning(
         model.train()
         train_loss = 0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
+        total_info = {}
         
         for context, current, base_actions, expert_actions, padding_mask in pbar:
             context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
             
             optimizer.zero_grad()
-            pred = model(context, current, base_actions, padding_mask)
-            loss = criterion(pred, expert_actions)
+            loss, info = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
             
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item()
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            for k, v in info.items():
+                if k not in total_info:
+                    total_info[k] = 0
+                total_info[k] += v
 
         # Validation phase
         model.eval()
         val_loss = 0
+        total_vinfo = {}
         with torch.no_grad():
             for context, current, base_actions, expert_actions, padding_mask in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
-                pred = model(context, current, base_actions, padding_mask)
-                vloss = criterion(pred, expert_actions)
+                vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
                 val_loss += vloss.item()
+
+                for k, v in vinfo.items():
+                    if k not in total_vinfo:
+                        total_vinfo[k] = 0
+                    total_vinfo[k] += v
 
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
@@ -237,7 +246,9 @@ def train_behavior_cloning(
                 "epoch": epoch,
                 "train_loss": avg_train_loss,
                 "val_loss": avg_val_loss,
-                "lr": optimizer.param_groups[0]['lr']
+                "lr": optimizer.param_groups[0]['lr'],
+                **{f"train/{k}": v / len(train_loader) for k, v in total_info.items()},
+                **{f"val/{k}": v / len(val_loader) for k, v in total_vinfo.items()},
             })
         
         if (epoch + 1) % SAVE_INTERVAL == 0 and save_path is not None:
@@ -284,10 +295,16 @@ def main():
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
 
+    # Mu stuff
+    parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
+    parser.add_argument("--mu_size", type=int, default=512, help="Dimension of mu.")
+    parser.add_argument("--mu_kl_factor", type=float, default=0.0, help="KL factor for mu.")
+
     # Head architecture
-    parser.add_argument("--use_new_head_arch", action="store_true", default=False, help="Whether we're using LayerNorm + SiLU + Dropout.")
+    parser.add_argument("--head_arch_version", type=str, default="ancient", help="Options: ancient, blocked, mlpblock_v1.")
     parser.add_argument("--num_head_layers", type=int, default=3, help="Number of Linear layers in the head.")
     parser.add_argument("--d_model_head", type=int, default=1024, help="Size of each Linear layer in the head.")
+    parser.add_argument("--dropout_head", type=float, default=0.0, help="Dropout rate for head layers.")
 
     # All the bounds
     parser.add_argument("--receptive_xlow", type=float, default=0.3, help="Lower bound of receptive x position.")
@@ -415,16 +432,20 @@ def main():
         'warm_start': args.warm_start,
         'train_percent': args.train_percent,
         'train_expert': TRAIN_EXPERT,
+        'infer_mode': args.infer_mode,
+        'mu_head_arch': args.mu_head_arch,
+        'mu_size': args.mu_size,
+        'mu_kl_factor': args.mu_kl_factor,
 
-        'use_new_head_arch': args.use_new_head_arch,
+        'head_arch_version': args.head_arch_version,
         'num_head_layers': args.num_head_layers,
         'd_model_head': args.d_model_head,
+        'dropout_head': args.dropout_head,
 
         'receptive_low': RECEPTIVE_LOW,
         'receptive_high': RECEPTIVE_HIGH,
         'insertive_low': INSERTIVE_LOW,
         'insertive_high': INSERTIVE_HIGH,
-        'infer_mode': args.infer_mode,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
@@ -487,10 +508,14 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = RobotTransformerPolicy(
         CONTEXT_DIM, CURRENT_DIM, LABEL_DIM, num_layers=NUM_LAYERS, d_model=D_MODEL, dropout=DROPOUT,
-        use_new_head_arch=args.use_new_head_arch,
+        head_arch_version=args.head_arch_version,
         num_head_layers=args.num_head_layers,
         d_model_head=args.d_model_head,
+        dropout_head=args.dropout_head,
         infer_mode=args.infer_mode,
+        mu_head_arch=args.mu_head_arch,
+        mu_size=args.mu_size,
+        mu_kl_factor=args.mu_kl_factor,
     )
     model.to(device)
     if ENABLE_WANDB:
