@@ -274,6 +274,8 @@ class RobotTransformerPolicy(nn.Module):
                 elif self.policy_cfg["current_head_arch"] == "linear":
                     curr_emb_mean = curr_emb[:, :self.policy_cfg["current_emb_size"]]
                     curr_emb = curr_emb_mean
+                if self.policy_cfg["current_norm"]:
+                    curr_emb = self.curr_norm(curr_emb)
 
                 combined = torch.cat([mu_emb, curr_emb], dim=-1)
                 output = self.head(combined)
