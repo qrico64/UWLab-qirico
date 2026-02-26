@@ -23,6 +23,11 @@ apptainer exec --nv \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
+
+export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
+export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/residual_feb22_standardhead_mu_linear_d64_kl01/1000-ckpt.pt
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb24/finetune-lora-utd1--residual_feb22_standardhead_mu_linear_d64_kl01
+
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
   --checkpoint peg_state_rl_expert.pt \
@@ -32,11 +37,11 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --num_envs 10 \
   --num_evals 5000 \
   --finetune_mode residual \
-  --base_policy /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt \
-  --correction_model /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb18/fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000_scaleandshift/1000-ckpt.pt \
-  --save_path /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb19/finetune-lora--fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000_scaleandshift \
+  --base_policy $BASE_POLICY \
+  --correction_model $CORRECTION_MODEL \
+  --save_path $SAVE_PATH \
   --utd_ratio 1.0 \
   --finetune_arch lora \
   --lr 3e-4 \
-  --reset_mode xleq035 \
+  --reset_mode xleq035
 '

@@ -460,7 +460,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
                 currents = (obs['policy2'] - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
                 fake_base_actions = torch.zeros(env.num_envs, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
-                base_actions = base_policy(fake_context, currents, fake_base_actions, fake_padding_mask)
+                base_actions = base_policy.get_action(fake_context, currents, fake_base_actions, padding_mask=fake_padding_mask)
                 base_actions = base_actions * base_policy_info['label_stds_tensor'] + base_policy_info['label_means_tensor']
                 
                 # step
@@ -487,7 +487,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     context = torch.cat([rec_observations[i, 0, :T], rec_actions[i, 0, :T]], axis=1)
                     current = rec_observations[i, 0, :T]
                     cur_base_actions = rec_actions[i, 0, :T]
-                    residual_actions = correction_model(
+                    residual_actions = correction_model.get_action(
                         context.repeat(T, 1, 1),
                         current,
                         cur_base_actions,
@@ -534,6 +534,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 if num_epochs > 0:
                     base_policy.train()
                     train_loss = 0
+                    total_info = {}
+
                     for _ in range(num_epochs):
                         idxs = torch.randint(0, replay_buffer['index'], size=(batch_size,), device=replay_buffer['current'].device)
                         batch_current = replay_buffer['current'][idxs].to(args_cli.device)
@@ -543,12 +545,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         fake_base_actions = torch.zeros(batch_size, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
 
                         optimizer.zero_grad()
-                        pred_actions = base_policy(fake_context, batch_current, fake_base_actions, fake_padding_mask)
-                        loss = torch.nn.functional.mse_loss(pred_actions, batch_label)
+                        loss, info = base_policy.loss(fake_context, batch_current, fake_base_actions, batch_label, fake_padding_mask)
                         loss.backward()
                         optimizer.step()
 
                         train_loss += loss.item()
+
+                        for k, v in info.items():
+                            if k not in total_info:
+                                total_info[k] = 0
+                            total_info[k] += v
                     
                     avg_train_loss = train_loss / num_epochs
                     if current_traj // LOG_INTERVAL > num_trajs_so_far // LOG_INTERVAL:
@@ -560,6 +566,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         wandb.log({
                             "train_loss": avg_train_loss,
                             "step": replay_buffer['index'],
+                            **{f"train/{k}": v / num_epochs for k, v in total_info.items()},
                         }, step=count_success.sum().item())
 
                     base_policy.eval()

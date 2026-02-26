@@ -6,6 +6,10 @@ export APPTAINERENV_OMNI_CACHE_PATH=/tmp/qirico/ov/cache
 export APPTAINERENV_TERM=xterm-256color
 mkdir -p $APPTAINERENV_OMNI_USER_DATA_PATH $APPTAINERENV_OMNI_CACHE_PATH
 
+export JOBTMP=/tmp/${USER}_tmp_${SLURM_JOB_ID:-manual}_$$
+mkdir -p "$JOBTMP"
+chmod 700 "$JOBTMP"
+
 apptainer exec --nv \
   --bind /mmfs1/gscratch/stf/:/mmfs1/gscratch/stf/ \
   --bind /gscratch/scrubbed/qirico/:/gscratch/scrubbed/qirico/ \
@@ -20,6 +24,7 @@ apptainer exec --nv \
   --bind $UW_BASE/logs:/workspace/uwlab/logs \
   --bind $UW_BASE/outputs:/workspace/uwlab/outputs \
   --bind $UW_BASE/data_storage:/workspace/uwlab/data_storage \
+  --bind "$JOBTMP:/tmp" \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e

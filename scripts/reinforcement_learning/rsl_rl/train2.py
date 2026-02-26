@@ -300,6 +300,12 @@ def main():
     parser.add_argument("--mu_size", type=int, default=512, help="Dimension of mu.")
     parser.add_argument("--mu_kl_factor", type=float, default=0.0, help="KL factor for mu.")
 
+    # Curr KL stuff
+    parser.add_argument("--current_norm", action="store_true", help="Whether to apply layer normalization to current embeddings.")
+    parser.add_argument("--current_head_arch", type=str, default="none", help="Options: none, linear.")
+    parser.add_argument("--current_emb_size", type=int, default=512, help="Dimension of current.")
+    parser.add_argument("--current_kl_factor", type=float, default=0.0, help="KL factor for current.")
+
     # Head architecture
     parser.add_argument("--head_arch_version", type=str, default="ancient", help="Options: ancient, blocked, mlpblock_v1.")
     parser.add_argument("--num_head_layers", type=int, default=3, help="Number of Linear layers in the head.")
@@ -446,6 +452,11 @@ def main():
         'receptive_high': RECEPTIVE_HIGH,
         'insertive_low': INSERTIVE_LOW,
         'insertive_high': INSERTIVE_HIGH,
+
+        'current_norm': args.current_norm,
+        'current_head_arch': args.current_head_arch,
+        'current_emb_size': args.current_emb_size,
+        'current_kl_factor': args.current_kl_factor,
     }
     if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
         with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
@@ -516,6 +527,10 @@ def main():
         mu_head_arch=args.mu_head_arch,
         mu_size=args.mu_size,
         mu_kl_factor=args.mu_kl_factor,
+        current_norm=args.current_norm,
+        current_head_arch=args.current_head_arch,
+        current_emb_size=args.current_emb_size,
+        current_kl_factor=args.current_kl_factor,
     )
     model.to(device)
     if ENABLE_WANDB:

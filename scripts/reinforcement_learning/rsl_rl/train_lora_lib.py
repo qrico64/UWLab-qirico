@@ -209,23 +209,28 @@ def convert_lora_model_to_plain_robot_policy(
         raise TypeError(f"Expected lora_model to be RobotTransformerPolicy, got {type(lora_model)}")
 
     # 1) Get architecture from model (prefer saved config)
-    if hasattr(lora_model, "policy_cfg") and isinstance(lora_model.policy_cfg, dict):
-        cfg = dict(lora_model.policy_cfg)
-    else:
-        cfg = _infer_policy_cfg_from_model(lora_model)
+    save_dict = dict(lora_model.policy_cfg)
 
     # 2) Construct fresh plain policy
     plain = RobotTransformerPolicy(
-        context_dim=cfg["context_dim"],
-        current_dim=cfg["current_dim"],
-        label_dim=cfg["label_dim"],
-        nhead=cfg["nhead"],
-        num_layers=cfg["num_layers"],
-        d_model=cfg["d_model"],
-        dropout=cfg["dropout"],
-        use_new_head_arch=cfg.get("use_new_head_arch", False),
-        num_head_layers=cfg.get("num_head_layers", 3),
-        d_model_head=cfg.get("d_model_head", 1024),
+        context_dim=save_dict["context_dim"],
+        current_dim=save_dict["current_dim"],
+        label_dim=save_dict["label_dim"],
+        nhead=save_dict["nhead"],
+        num_layers=save_dict["num_layers"],
+        d_model=save_dict["d_model"],
+        dropout=save_dict["dropout"],
+        head_arch_version=save_dict["head_arch_version"],
+        num_head_layers=save_dict["num_head_layers"],
+        d_model_head=save_dict["d_model_head"],
+        infer_mode=save_dict["infer_mode"],
+        dropout_head=save_dict["dropout_head"],
+        mu_head_arch=save_dict["mu_head_arch"],
+        mu_size=save_dict["mu_size"],
+        mu_kl_factor=save_dict["mu_kl_factor"],
+        current_head_arch=save_dict["current_head_arch"],
+        current_emb_size=save_dict["current_emb_size"],
+        current_kl_factor=save_dict["current_kl_factor"],
     )
 
     if device is not None:
