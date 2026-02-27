@@ -222,8 +222,10 @@ class RobotTransformerPolicy(nn.Module):
                 info = info | {
                     "kl_loss_current": self.policy_cfg["current_kl_factor"] * kl_loss_curr.item(),
                     "current_kl_factor": self.policy_cfg["current_kl_factor"],
-                    "curr_emb_logvar_mean": curr_emb_logvar.mean().item(),
-                    "curr_emb_mean_mean": curr_emb_mean.mean().item(),
+                    "curr_emb_logvar_mean": torch.linalg.norm(curr_emb_logvar, dim=-1).mean().item(),
+                    "curr_emb_logvar_std": torch.std(curr_emb_logvar, dim=-1).mean().item(),
+                    "curr_emb_mean_mean": torch.linalg.norm(curr_emb_mean, dim=-1).mean().item(),
+                    "curr_emb_mean_std": torch.std(curr_emb_mean, dim=-1).mean().item(),
                 }
                 curr_emb_std = torch.exp(0.5 * curr_emb_logvar)
                 curr_eps = torch.randn_like(curr_emb_mean)

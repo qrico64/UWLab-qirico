@@ -288,7 +288,7 @@ def main():
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--save_path", type=str, default="policy_checkpoint.pt", help="Path to save the model")
-    parser.add_argument("--dataset_path", type=str, default="N/A", help="Path to load the dataset")
+    parser.add_argument("--dataset_path", type=str, nargs='+', default=["N/A"], help="Path(s) to load the dataset (multiple paths will be combined)")
     parser.add_argument("--train_mode", type=str, default="single-traj", help="Options: single-traj, closest-neighbors, autoregressive, full-traj.")
     parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
@@ -354,16 +354,19 @@ def main():
         WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not TRAIN_EXPERT else "robot-mlp-bc"
         wandb.init(project=WANDB_PROJECT, config=vars(args))
     
-    DATASET_PATH = args.dataset_path
+    DATASET_PATHS = args.dataset_path
 
     trajs = []
-    try:
-        with open(DATASET_PATH, "rb") as fi:
-            trajs += pickle.load(fi)
-    except FileNotFoundError:
-        print("Data file not found.")
-        return
-    print(f"Loaded dataset from {DATASET_PATH}.")
+    for DATASET_PATH in DATASET_PATHS:
+        try:
+            with open(DATASET_PATH, "rb") as fi:
+                loaded = pickle.load(fi)
+                trajs += loaded
+                print(f"Loaded {len(loaded)} trajectories from {DATASET_PATH}.")
+        except FileNotFoundError:
+            print(f"Data file not found: {DATASET_PATH}")
+            return
+    print(f"Total trajectories loaded: {len(trajs)}.")
 
     processed_data = []
     for traj in trajs:
@@ -418,7 +421,7 @@ def main():
         traj['expert_actions'] = (traj['expert_actions'] - label_means) / label_stds
 
     save_dict = {
-        'dataset_origin': os.path.abspath(DATASET_PATH),
+        'dataset_origin': [os.path.abspath(p) for p in DATASET_PATHS],
         'dataset_size': len(processed_data),
         'save_path': save_path,
         'current_means': current_means,
@@ -458,24 +461,17 @@ def main():
         'current_emb_size': args.current_emb_size,
         'current_kl_factor': args.current_kl_factor,
     }
-    if os.path.exists(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl")):
-        with open(os.path.join(os.path.dirname(DATASET_PATH), "info.pkl"), "rb") as fi:
-            load_dict = pickle.load(fi)
-        save_dict |= {
-            'use_noise_scales': load_dict['use_general_scales'],
-            'sys_noise_scale': load_dict['sys_noise_scale'],
-            'rand_noise_scale': load_dict['rand_noise_scale'],
-            'obs_insertive_noise_scale': load_dict['obs_insertive_noise_scale'],
-            'obs_receptive_noise_scale': load_dict['obs_receptive_noise_scale'],
-        }
-    else:
-        save_dict |= {
-            'use_noise_scales': True,
-            'sys_noise_scale': 0,
-            'rand_noise_scale': 0,
-            'obs_insertive_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-1]),
-            'obs_receptive_noise_scale': float(os.path.basename(DATASET_PATH)[:-4].split('-')[-2]),
-        }
+    # Use the first dataset path for info.pkl lookup (noise scale metadata)
+    first_path = DATASET_PATHS[0]
+    with open(os.path.join(os.path.dirname(first_path), "info.pkl"), "rb") as fi:
+        load_dict = pickle.load(fi)
+    save_dict |= {
+        'use_noise_scales': load_dict['use_general_scales'],
+        'sys_noise_scale': load_dict['sys_noise_scale'],
+        'rand_noise_scale': load_dict['rand_noise_scale'],
+        'obs_insertive_noise_scale': load_dict['obs_insertive_noise_scale'],
+        'obs_receptive_noise_scale': load_dict['obs_receptive_noise_scale'],
+    }
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
         pickle.dump(save_dict, fi)
