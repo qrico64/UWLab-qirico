@@ -306,6 +306,11 @@ def main():
     parser.add_argument("--current_emb_size", type=int, default=512, help="Dimension of current.")
     parser.add_argument("--current_kl_factor", type=float, default=0.0, help="KL factor for current.")
 
+    # Combined head stuff
+    parser.add_argument("--combined_head_arch", type=str, default="none", help="Options: none, linear, 2layer.")
+    parser.add_argument("--combined_emb_size", type=int, default=512, help="Dimension of combined.")
+    parser.add_argument("--combined_kl_factor", type=float, default=0.0, help="KL factor for combined.")
+
     # Head architecture
     parser.add_argument("--head_arch_version", type=str, default="ancient", help="Options: ancient, blocked, mlpblock_v1.")
     parser.add_argument("--num_head_layers", type=int, default=3, help="Number of Linear layers in the head.")
@@ -460,6 +465,10 @@ def main():
         'current_head_arch': args.current_head_arch,
         'current_emb_size': args.current_emb_size,
         'current_kl_factor': args.current_kl_factor,
+
+        'combined_head_arch': args.combined_head_arch,
+        'combined_emb_size': args.combined_emb_size,
+        'combined_kl_factor': args.combined_kl_factor,
     }
     # Use the first dataset path for info.pkl lookup (noise scale metadata)
     first_path = DATASET_PATHS[0]
@@ -527,6 +536,9 @@ def main():
         current_head_arch=args.current_head_arch,
         current_emb_size=args.current_emb_size,
         current_kl_factor=args.current_kl_factor,
+        combined_head_arch=args.combined_head_arch,
+        combined_emb_size=args.combined_emb_size,
+        combined_kl_factor=args.combined_kl_factor,
     )
     model.to(device)
     if ENABLE_WANDB:

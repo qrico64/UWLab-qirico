@@ -63,6 +63,9 @@ class RobotTransformerPolicy(nn.Module):
             current_head_arch: str = "none", # Options: "none", "linear".
             current_emb_size: int = 512,
             current_kl_factor: float = 0.0,
+            combined_head_arch: str = "none", # Options: "none", "linear", "2layer".
+            combined_emb_size: int = 512,
+            combined_kl_factor: float = 0.0,
         ):
         super().__init__()
 
@@ -86,6 +89,9 @@ class RobotTransformerPolicy(nn.Module):
             current_head_arch=current_head_arch,
             current_emb_size=current_emb_size,
             current_kl_factor=current_kl_factor,
+            combined_head_arch=combined_head_arch,
+            combined_emb_size=combined_emb_size,
+            combined_kl_factor=combined_kl_factor,
         )
 
         self.context_proj = nn.Linear(context_dim, d_model)
@@ -98,6 +104,7 @@ class RobotTransformerPolicy(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
 
+        # mu head
         if mu_head_arch == "none":
             assert mu_size == d_model, f"{mu_size} != {d_model}"
         elif mu_head_arch == "identity":
@@ -114,19 +121,44 @@ class RobotTransformerPolicy(nn.Module):
         else:
             raise NotImplementedError(f"Unknown mu_head_arch: {mu_head_arch}")
         
+        # current head
         if current_head_arch == "none":
             assert current_emb_size == d_model, f"{current_emb_size} != {d_model}"
             self.current_proj = nn.Linear(current_dim, current_emb_size)
         elif current_head_arch == "linear":
             assert not current_norm
             self.current_proj = nn.Linear(current_dim, current_emb_size * 2)
+        elif current_head_arch == "2layer":
+            assert not current_norm
+            self.current_proj = nn.Sequential(
+                nn.Linear(current_dim, current_emb_size * 4),
+                nn.ReLU(),
+                nn.Linear(current_emb_size * 4, current_emb_size * 2),
+            )
         else:
             raise NotImplementedError(f"Unknown current_head_arch: {current_head_arch}")
         if current_norm:
             self.curr_norm = nn.LayerNorm(current_emb_size)
+        
+        # combined head
+        combined_head_in_dim = current_emb_size + mu_size
+        if combined_head_arch == "none":
+            combined_head_out_dim = mu_size + current_emb_size
+        elif combined_head_arch == "linear":
+            self.combined_proj = nn.Linear(combined_head_in_dim, combined_emb_size * 2)
+            combined_head_out_dim = combined_emb_size
+        elif combined_head_arch == "2layer":
+            self.combined_proj = nn.Sequential(
+                nn.Linear(combined_head_in_dim, combined_emb_size * 4),
+                nn.ReLU(),
+                nn.Linear(combined_emb_size * 4, combined_emb_size * 2),
+            )
+            combined_head_out_dim = combined_emb_size
+        else:
+            raise NotImplementedError(f"Unknown combined_head_arch: {combined_head_arch}")
 
         # head
-        head_in_dim = current_dim if infer_mode == "expert_new" else current_emb_size + mu_size
+        head_in_dim = current_dim if infer_mode == "expert_new" else combined_head_out_dim
         head_out_dim = label_dim * 2 if infer_mode == "res_scale_shift" else label_dim
         if head_arch_version == "ancient":
             self.head = nn.Sequential(
@@ -156,8 +188,10 @@ class RobotTransformerPolicy(nn.Module):
             raise NotImplementedError(f"Unknown head_arch_version: {head_arch_version}")
         print()
         print("****** Creating Transformer Policy ******")
-        print("Head:")
-        print(self.head)
+        print("Policy Config:")
+        print(self.policy_cfg)
+        print("Model Architecture:")
+        print(self)
         print("****** End Transformer Policy ******")
         print()
 
@@ -188,6 +222,7 @@ class RobotTransformerPolicy(nn.Module):
             new_actions = self.head(current)
         else:
             ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+            # mu head
             if self.policy_cfg["mu_head_arch"] == "none":
                 mu_emb = ctx_agg
             else:
@@ -208,12 +243,12 @@ class RobotTransformerPolicy(nn.Module):
                 mu_std = torch.exp(0.5 * mu_logvar)
                 eps = torch.randn_like(mu_mean)
                 mu_emb = mu_mean + eps * mu_std
-                
-            # head stuff
+
+            # current head
             curr_emb = self.current_proj(current)
             if self.policy_cfg["current_head_arch"] == "none":
                 pass
-            elif self.policy_cfg["current_head_arch"] == "linear":
+            elif self.policy_cfg["current_head_arch"] == "linear" or self.policy_cfg["current_head_arch"] == "2layer":
                 curr_emb_mean = curr_emb[:, :self.policy_cfg["current_emb_size"]]
                 curr_emb_logvar = curr_emb[:, self.policy_cfg["current_emb_size"]:]
                 curr_emb_logvar = torch.clamp(curr_emb_logvar, -20, 20)
@@ -233,8 +268,30 @@ class RobotTransformerPolicy(nn.Module):
             if self.policy_cfg["current_norm"]:
                 curr_emb = self.curr_norm(curr_emb)
             
+            # combined head
             combined = torch.cat([mu_emb, curr_emb], dim=-1)
-            output = self.head(combined)
+            if self.policy_cfg["combined_head_arch"] == "none":
+                combined_head_out = combined
+            else:
+                combined_head_output = self.combined_proj(combined)
+                combined_head_mean = combined_head_output[:, :self.policy_cfg["combined_emb_size"]]
+                combined_head_logvar = combined_head_output[:, self.policy_cfg["combined_emb_size"]:]
+                combined_head_logvar = torch.clamp(combined_head_logvar, -20, 20)
+                kl_loss_combined = -0.5 * torch.sum(1 + combined_head_logvar - combined_head_mean.pow(2) - combined_head_logvar.exp(), dim=-1).mean()
+                loss += self.policy_cfg["combined_kl_factor"] * kl_loss_combined
+                info = info | {
+                    "kl_loss_combined": self.policy_cfg["combined_kl_factor"] * kl_loss_combined.item(),
+                    "combined_kl_factor": self.policy_cfg["combined_kl_factor"],
+                    "combined_head_logvar_mean": torch.linalg.norm(combined_head_logvar, dim=-1).mean().item(),
+                    "combined_head_logvar_std": torch.std(combined_head_logvar, dim=-1).mean().item(),
+                    "combined_head_mean_mean": torch.linalg.norm(combined_head_mean, dim=-1).mean().item(),
+                    "combined_head_mean_std": torch.std(combined_head_mean, dim=-1).mean().item(),
+                }
+                combined_head_std = torch.exp(0.5 * combined_head_logvar)
+                combined_head_eps = torch.randn_like(combined_head_mean)
+                combined_head_out = combined_head_mean + combined_head_eps * combined_head_std
+
+            output = self.head(combined_head_out)
             if self.policy_cfg["infer_mode"] == "expert":
                 new_actions = output
             elif self.policy_cfg["infer_mode"] == "residual":
@@ -273,14 +330,22 @@ class RobotTransformerPolicy(nn.Module):
                 curr_emb = self.current_proj(current)
                 if self.policy_cfg["current_head_arch"] == "none":
                     pass
-                elif self.policy_cfg["current_head_arch"] == "linear":
+                elif self.policy_cfg["current_head_arch"] == "linear" or self.policy_cfg["current_head_arch"] == "2layer":
                     curr_emb_mean = curr_emb[:, :self.policy_cfg["current_emb_size"]]
                     curr_emb = curr_emb_mean
                 if self.policy_cfg["current_norm"]:
                     curr_emb = self.curr_norm(curr_emb)
 
                 combined = torch.cat([mu_emb, curr_emb], dim=-1)
-                output = self.head(combined)
+                # combined head
+                if self.policy_cfg["combined_head_arch"] == "none":
+                    combined_head_out = combined
+                else:
+                    combined_head_output = self.combined_proj(combined)
+                    combined_head_mean = combined_head_output[:, :self.policy_cfg["combined_emb_size"]]
+                    combined_head_out = combined_head_mean
+
+                output = self.head(combined_head_out)
                 if self.policy_cfg["infer_mode"] == "expert":
                     new_actions = output
                 elif self.policy_cfg["infer_mode"] == "residual":
@@ -323,7 +388,10 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "current_norm": True,
             "current_head_arch": "none",
             "current_emb_size": 512,
-            "current_kl_factor": 0.1,
+            "current_kl_factor": 0.0,
+            "combined_head_arch": "none",
+            "combined_emb_size": 512,
+            "combined_kl_factor": 0.0,
         } | save_dict
         save_dict = {
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
@@ -351,6 +419,9 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             current_head_arch=save_dict["current_head_arch"],
             current_emb_size=save_dict["current_emb_size"],
             current_kl_factor=save_dict["current_kl_factor"],
+            combined_head_arch=save_dict["combined_head_arch"],
+            combined_emb_size=save_dict["combined_emb_size"],
+            combined_kl_factor=save_dict["combined_kl_factor"],
         )
 
         # load weights

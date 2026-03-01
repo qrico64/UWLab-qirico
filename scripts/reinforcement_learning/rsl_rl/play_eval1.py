@@ -42,6 +42,7 @@ parser.add_argument("--num_evals", type=int, default=2000, help="Number of traje
 parser.add_argument("--base_policy", type=str, default=None, help="Base model .pt file.")
 parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035.")
 parser.add_argument("--no_viz", action="store_true", default=False, help="Whether to disable all visualization (including videos).")
+parser.add_argument("--eval_mode", type=str, default='default', help="Options: default, sysnoise3, obsnoise001.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -216,6 +217,7 @@ def evaluate_model(
     horizon=60,
     device='cuda',
     no_viz: bool = False,
+    eval_mode: str = 'default',
 ):
     T_DIM = horizon
     N = env.num_envs
@@ -233,17 +235,13 @@ def evaluate_model(
             padding_mask=torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
         )
     
+    # Correction model stuff
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
     A_DIM = env.action_space.shape[-1]
     RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
     CORRECTION_MODEL_FILE = pathlib.Path(correction_model)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
-    temp_viz_directory_end = reset_mode + ("-" + BASE_POLICY_FILE.parent.name if BASE_POLICY_FILE is not None else "")
-    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
-    if no_viz:
-        VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
-    VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
     correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
     
     assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
@@ -251,6 +249,39 @@ def evaluate_model(
     assert correction_model_info['label_dim'] == A_DIM
 
     TRAIN_EXPERT = correction_model_info['infer_mode'] in ["expert", "expert_new"]
+
+    # Eval mode stuff
+    if BASE_POLICY_FILE is not None:
+        correction_model_info = correction_model_info | {
+            'sys_noise_scale': 0.0,
+            'obs_receptive_noise_scale': 0.0,
+            'obs_insertive_noise_scale': 0.0,
+        }
+        eval_mode = 'zero'
+    elif eval_mode == 'sysnoise3':
+        correction_model_info = correction_model_info | {
+            'sys_noise_scale': 3.0,
+            'obs_receptive_noise_scale': 0.0,
+            'obs_insertive_noise_scale': 0.0,
+        }
+    elif eval_mode == 'obsnoise001':
+        correction_model_info = correction_model_info | {
+            'sys_noise_scale': 0.0,
+            'obs_receptive_noise_scale': 0.01,
+            'obs_insertive_noise_scale': 0.0,
+        }
+    elif eval_mode == 'default':
+        pass
+    else:
+        raise NotImplementedError(f"Eval mode {eval_mode} not implemented.")
+
+    # Viz directory
+    temp_viz_directory_end = reset_mode + ("-" + BASE_POLICY_FILE.parent.name if BASE_POLICY_FILE is not None else "")
+    temp_viz_directory_end += ("-" + eval_mode) if eval_mode != 'default' else ""
+    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
+    if no_viz:
+        VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
+    VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     N_DIM = 2
     completed_reset = torch.full((N,), not need_reset_envs, dtype=torch.bool, device=device)
@@ -275,10 +306,7 @@ def evaluate_model(
         general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=device) / 5
     else:
         general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=device)
-    if BASE_POLICY_FILE is not None:
-        correction_model_info['sys_noise_scale'] = 0
-        correction_model_info['obs_receptive_noise_scale'] = 0
-        correction_model_info['obs_insertive_noise_scale'] = 0
+
     sys_noises = torch.randn(N, A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
     print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
     obs_receptive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
@@ -444,10 +472,12 @@ def evaluate_model(
     
     print(f"Correction model at {CORRECTION_MODEL_FILE}")
     print(f"Base policy at {BASE_POLICY_FILE}")
+    print(f"Eval mode: {eval_mode}")
     final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
     with open(VIZ_DIRECTORY / "final_success_rate.txt", 'w') as f:
         f.write(f"{CORRECTION_MODEL_FILE}\n")
         f.write(f"{BASE_POLICY_FILE}\n")
+        f.write(f"Eval mode: {eval_mode}\n")
         f.write(f"{count_success.tolist()}\n")
         f.write(f"{final_success_rate}")
     return final_success_rate
@@ -572,6 +602,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             device=agent_cfg.device,
             need_reset_envs=False,
             no_viz=args_cli.no_viz,
+            eval_mode=args_cli.eval_mode,
         )
     elif correction_model_file.is_dir():
         checkpoints = list(correction_model_file.glob("*.pt"))
@@ -596,6 +627,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 device=agent_cfg.device,
                 need_reset_envs=True,
                 no_viz=args_cli.no_viz,
+                eval_mode=args_cli.eval_mode,
             )
             success_rates.append(success_rate)
         
