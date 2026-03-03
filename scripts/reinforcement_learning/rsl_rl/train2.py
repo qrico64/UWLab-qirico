@@ -119,13 +119,15 @@ class IndependentTrajectoryDataset(Dataset):
         else:
             raise NotImplementedError(self.train_mode)
         
-        return context, current, base_action, expert_action
+        data_source = traj['data_source']
+        
+        return context, current, base_action, expert_action, data_source
 
 def collate_fn(batch):
     """
     Custom collator to pad trajectories of different lengths.
     """
-    contexts, currents, base_actions, expert_actions = zip(*batch)
+    contexts, currents, base_actions, expert_actions, data_sources = zip(*batch)
     
     # Pad sequences to the max length in this specific batch
     # padded_contexts shape: (Batch, Max_T, Context_Dim)
@@ -141,7 +143,7 @@ def collate_fn(batch):
     base_actions = torch.stack(base_actions)
     expert_actions = torch.stack(expert_actions)
     
-    return padded_contexts, currents, base_actions, expert_actions, padding_mask
+    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources
 
 def train_behavior_cloning(
         model,
@@ -156,6 +158,13 @@ def train_behavior_cloning(
         closest_neighbors_radius: float = 0.001,
         warm_start: int = 0,
     ):
+    unique_data_sources_train = {}
+    for traj in train_data:
+        unique_data_sources_train[traj['data_source']] = unique_data_sources_train.get(traj['data_source'], 0) + 1
+    unique_data_sources_val = {}
+    for traj in val_data:
+        unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
+
     train_loader = DataLoader(
         IndependentTrajectoryDataset(
             train_data,
@@ -202,7 +211,7 @@ def train_behavior_cloning(
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         total_info = {}
         
-        for context, current, base_actions, expert_actions, padding_mask in pbar:
+        for context, current, base_actions, expert_actions, padding_mask, data_sources in pbar:
             context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
             
@@ -214,27 +223,36 @@ def train_behavior_cloning(
             
             train_loss += loss.item()
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
-            for k, v in info.items():
-                if k not in total_info:
-                    total_info[k] = 0
-                total_info[k] += v
+            for data_source in unique_data_sources_train.keys():
+                correspondent = np.array([ds == data_source for ds in data_sources])
+                if correspondent.sum() <= 0:
+                    continue
+                for k, v in info.items():
+                    if isinstance(v, np.ndarray):
+                        total_info[f"{data_source}/{k}"] = total_info.get(f"{data_source}/{k}", 0) + v[correspondent].sum()
+                    else:
+                        total_info[f"{data_source}/{k}"] = total_info.get(f"{data_source}/{k}", 0) + v * correspondent.sum()
 
         # Validation phase
         model.eval()
         val_loss = 0
         total_vinfo = {}
         with torch.no_grad():
-            for context, current, base_actions, expert_actions, padding_mask in val_loader:
+            for context, current, base_actions, expert_actions, padding_mask, data_sources in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
                 vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
                 val_loss += vloss.item()
 
-                for k, v in vinfo.items():
-                    if k not in total_vinfo:
-                        total_vinfo[k] = 0
-                    total_vinfo[k] += v
-
+                for data_source in unique_data_sources_val.keys():
+                    correspondent = np.array([ds == data_source for ds in data_sources])
+                    if correspondent.sum() <= 0:
+                        continue
+                    for k, v in vinfo.items():
+                        if isinstance(v, np.ndarray):
+                            total_vinfo[f"{data_source}/{k}"] = total_vinfo.get(f"{data_source}/{k}", 0) + v[correspondent].sum()
+                        else:
+                            total_vinfo[f"{data_source}/{k}"] = total_vinfo.get(f"{data_source}/{k}", 0) + v * correspondent.sum()
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
         scheduler.step()
@@ -242,14 +260,19 @@ def train_behavior_cloning(
         print(f"Summary - Train: {avg_train_loss:.6f} | Val: {avg_val_loss:.6f}")
         
         if ENABLE_WANDB:
-            wandb.log({
+            wandblog = {
                 "epoch": epoch,
                 "train_loss": avg_train_loss,
                 "val_loss": avg_val_loss,
                 "lr": optimizer.param_groups[0]['lr'],
-                **{f"train/{k}": v / len(train_loader) for k, v in total_info.items()},
-                **{f"val/{k}": v / len(val_loader) for k, v in total_vinfo.items()},
-            })
+            }
+            for k in total_info.keys():
+                data_source, metric_name = k.split('/')
+                wandblog[f"train_{data_source}/{metric_name}"] = total_info[k] / unique_data_sources_train[data_source]
+            for k in total_vinfo.keys():
+                data_source, metric_name = k.split('/')
+                wandblog[f"val_{data_source}/{metric_name}"] = total_vinfo[k] / unique_data_sources_val[data_source]
+            wandb.log(wandblog)
         
         if (epoch + 1) % SAVE_INTERVAL == 0 and save_path is not None:
             csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
@@ -357,49 +380,62 @@ def main():
 
     if ENABLE_WANDB:
         WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not TRAIN_EXPERT else "robot-mlp-bc"
-        wandb.init(project=WANDB_PROJECT, config=vars(args))
+        WANDB_NAME = os.path.basename(save_path)
+        wandb.init(project=WANDB_PROJECT, config=vars(args), name=WANDB_NAME)
     
     DATASET_PATHS = args.dataset_path
 
-    trajs = []
+    DATASET_NAMES = {
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb26/fourthtry_receptive_0_sys3_rand2_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/cut-trajectories.pkl": "sysnoise_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl": "obsnoise_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb19/fourthtry_receptive_0006_sys4_rand2_recxgeq05/job-True-4.0-2.0-100000-60--0.006-0.0/cut-trajectories.pkl": "obs0006_sys4_ds",
+    }
+
+    datasets = []
+    total_trajs = 0
     for DATASET_PATH in DATASET_PATHS:
+        assert DATASET_PATH in DATASET_NAMES
         try:
             with open(DATASET_PATH, "rb") as fi:
                 loaded = pickle.load(fi)
-                trajs += loaded
+                datasets.append((loaded, DATASET_PATH))
+                total_trajs += len(loaded)
                 print(f"Loaded {len(loaded)} trajectories from {DATASET_PATH}.")
         except FileNotFoundError:
             print(f"Data file not found: {DATASET_PATH}")
             return
-    print(f"Total trajectories loaded: {len(trajs)}.")
 
     processed_data = []
-    for traj in trajs:
-        if not ((traj['starting_position']['receptive_position'][:2] >= RECEPTIVE_LOW) & (traj['starting_position']['receptive_position'][:2] <= RECEPTIVE_HIGH) &
-            (traj['starting_position']['insertive_position'][:2] >= INSERTIVE_LOW) & (traj['starting_position']['insertive_position'][:2] <= INSERTIVE_HIGH)).all():
-            continue
-        
-        if traj['rewards'].ndim == 1:
-            traj['rewards'] = traj['rewards'][:, None]
-        
-        processed_traj = {
-            'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
-            'current': traj['obs']['policy2'],
-            'base_actions': traj['actions'],
-            'expert_actions': traj['actions_expert'],
-            'choosable': traj['obs']['policy2'].shape[0] > 6,
-            'obs_receptive_noise': traj['obs_receptive_noise'],
-            '__log': traj,
-            # 'choosable': not np.any(traj['rewards'] > 0.11),
-        }
-        if 'rand_noise' in traj.keys():
-            traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]
-            processed_traj['context'][:, CURRENT_DIM:] += traj['rand_noise']
-        
-        processed_data.append(processed_traj)
+    for dataset in datasets:
+        trajs, data_source = dataset
+        dataset_name = DATASET_NAMES.get(data_source, "unknown_ds")
+        for traj in trajs:
+            if not ((traj['starting_position']['receptive_position'][:2] >= RECEPTIVE_LOW) & (traj['starting_position']['receptive_position'][:2] <= RECEPTIVE_HIGH) &
+                (traj['starting_position']['insertive_position'][:2] >= INSERTIVE_LOW) & (traj['starting_position']['insertive_position'][:2] <= INSERTIVE_HIGH)).all():
+                continue
+            
+            if traj['rewards'].ndim == 1:
+                traj['rewards'] = traj['rewards'][:, None]
+            
+            processed_traj = {
+                'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
+                'current': traj['obs']['policy2'],
+                'base_actions': traj['actions'],
+                'expert_actions': traj['actions_expert'],
+                'choosable': traj['obs']['policy2'].shape[0] > 6,
+                'obs_receptive_noise': traj['obs_receptive_noise'],
+                'data_source': dataset_name,
+                '__log': traj,
+                # 'choosable': not np.any(traj['rewards'] > 0.11),
+            }
+            if 'rand_noise' in traj.keys():
+                traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]
+                processed_traj['context'][:, CURRENT_DIM:] += traj['rand_noise']
+            
+            processed_data.append(processed_traj)
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
     assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
-    print(f"Kept {len(processed_data)}/{len(trajs)} ({len(processed_data)/len(trajs)}) trajectories.")
+    print(f"Kept {len(processed_data)}/{total_trajs} ({len(processed_data)/total_trajs}) trajectories.")
 
     # Current normalization
     all_currents = np.concatenate([traj['current'] for traj in processed_data], axis=0)

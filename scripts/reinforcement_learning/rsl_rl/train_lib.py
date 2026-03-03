@@ -135,6 +135,15 @@ class RobotTransformerPolicy(nn.Module):
                 nn.ReLU(),
                 nn.Linear(current_emb_size * 4, current_emb_size * 2),
             )
+        elif current_head_arch == "3layer":
+            assert not current_norm
+            self.current_proj = nn.Sequential(
+                nn.Linear(current_dim, current_emb_size * 4),
+                nn.ReLU(),
+                nn.Linear(current_emb_size * 4, current_emb_size * 4),
+                nn.ReLU(),
+                nn.Linear(current_emb_size * 4, current_emb_size * 2),
+            )
         else:
             raise NotImplementedError(f"Unknown current_head_arch: {current_head_arch}")
         if current_norm:
@@ -230,15 +239,15 @@ class RobotTransformerPolicy(nn.Module):
                 mu_mean = mu[:, :self.policy_cfg["mu_size"]]
                 mu_logvar = mu[:, self.policy_cfg["mu_size"]:]
                 mu_logvar = torch.clamp(mu_logvar, -20, 20)
-                kl_loss = -0.5 * torch.sum(1 + mu_logvar - mu_mean.pow(2) - mu_logvar.exp(), dim=-1).mean()
-                loss += self.policy_cfg["mu_kl_factor"] * kl_loss
+                kl_loss = -0.5 * torch.sum(1 + mu_logvar - mu_mean.pow(2) - mu_logvar.exp(), dim=-1).mean(dim=-1)
+                loss += self.policy_cfg["mu_kl_factor"] * kl_loss.mean()
                 info = info | {
-                    "kl_loss_mu": self.policy_cfg["mu_kl_factor"] * kl_loss.item(),
+                    "kl_loss_mu": self.policy_cfg["mu_kl_factor"] * kl_loss.detach().cpu().numpy().mean(),
                     "mu_kl_factor": self.policy_cfg["mu_kl_factor"],
-                    "mu_logvar_mean": torch.linalg.norm(mu_logvar, dim=-1).mean().item(),
-                    "mu_logvar_std": torch.std(mu_logvar, dim=-1).mean().item(),
-                    "mu_mean_mean": torch.linalg.norm(mu_mean, dim=-1).mean().item(),
-                    "mu_mean_std": torch.std(mu_mean, dim=-1).mean().item(),
+                    "mu_logvar_mean": torch.linalg.norm(mu_logvar, dim=-1).detach().cpu().numpy(),
+                    "mu_logvar_std": torch.std(mu_logvar, dim=-1).detach().cpu().numpy(),
+                    "mu_mean_mean": torch.linalg.norm(mu_mean, dim=-1).detach().cpu().numpy(),
+                    "mu_mean_std": torch.std(mu_mean, dim=-1).detach().cpu().numpy(),
                 }
                 mu_std = torch.exp(0.5 * mu_logvar)
                 eps = torch.randn_like(mu_mean)
@@ -248,19 +257,19 @@ class RobotTransformerPolicy(nn.Module):
             curr_emb = self.current_proj(current)
             if self.policy_cfg["current_head_arch"] == "none":
                 pass
-            elif self.policy_cfg["current_head_arch"] == "linear" or self.policy_cfg["current_head_arch"] == "2layer":
+            elif self.policy_cfg["current_head_arch"] == "linear" or self.policy_cfg["current_head_arch"] == "2layer" or self.policy_cfg["current_head_arch"] == "3layer":
                 curr_emb_mean = curr_emb[:, :self.policy_cfg["current_emb_size"]]
                 curr_emb_logvar = curr_emb[:, self.policy_cfg["current_emb_size"]:]
                 curr_emb_logvar = torch.clamp(curr_emb_logvar, -20, 20)
-                kl_loss_curr = -0.5 * torch.sum(1 + curr_emb_logvar - curr_emb_mean.pow(2) - curr_emb_logvar.exp(), dim=-1).mean()
-                loss += self.policy_cfg["current_kl_factor"] * kl_loss_curr
+                kl_loss_curr = -0.5 * torch.sum(1 + curr_emb_logvar - curr_emb_mean.pow(2) - curr_emb_logvar.exp(), dim=-1).mean(dim=-1)
+                loss += self.policy_cfg["current_kl_factor"] * kl_loss_curr.mean()
                 info = info | {
-                    "kl_loss_current": self.policy_cfg["current_kl_factor"] * kl_loss_curr.item(),
+                    "kl_loss_current": self.policy_cfg["current_kl_factor"] * kl_loss_curr.detach().cpu().numpy().mean(),
                     "current_kl_factor": self.policy_cfg["current_kl_factor"],
-                    "curr_emb_logvar_mean": torch.linalg.norm(curr_emb_logvar, dim=-1).mean().item(),
-                    "curr_emb_logvar_std": torch.std(curr_emb_logvar, dim=-1).mean().item(),
-                    "curr_emb_mean_mean": torch.linalg.norm(curr_emb_mean, dim=-1).mean().item(),
-                    "curr_emb_mean_std": torch.std(curr_emb_mean, dim=-1).mean().item(),
+                    "curr_emb_logvar_mean": torch.linalg.norm(curr_emb_logvar, dim=-1).detach().cpu().numpy(),
+                    "curr_emb_logvar_std": torch.std(curr_emb_logvar, dim=-1).detach().cpu().numpy(),
+                    "curr_emb_mean_mean": torch.linalg.norm(curr_emb_mean, dim=-1).detach().cpu().numpy(),
+                    "curr_emb_mean_std": torch.std(curr_emb_mean, dim=-1).detach().cpu().numpy(),
                 }
                 curr_emb_std = torch.exp(0.5 * curr_emb_logvar)
                 curr_eps = torch.randn_like(curr_emb_mean)
@@ -277,15 +286,15 @@ class RobotTransformerPolicy(nn.Module):
                 combined_head_mean = combined_head_output[:, :self.policy_cfg["combined_emb_size"]]
                 combined_head_logvar = combined_head_output[:, self.policy_cfg["combined_emb_size"]:]
                 combined_head_logvar = torch.clamp(combined_head_logvar, -20, 20)
-                kl_loss_combined = -0.5 * torch.sum(1 + combined_head_logvar - combined_head_mean.pow(2) - combined_head_logvar.exp(), dim=-1).mean()
-                loss += self.policy_cfg["combined_kl_factor"] * kl_loss_combined
+                kl_loss_combined = -0.5 * torch.sum(1 + combined_head_logvar - combined_head_mean.pow(2) - combined_head_logvar.exp(), dim=-1).mean(dim=-1)
+                loss += self.policy_cfg["combined_kl_factor"] * kl_loss_combined.mean()
                 info = info | {
-                    "kl_loss_combined": self.policy_cfg["combined_kl_factor"] * kl_loss_combined.item(),
+                    "kl_loss_combined": self.policy_cfg["combined_kl_factor"] * kl_loss_combined.detach().cpu().numpy().mean(),
                     "combined_kl_factor": self.policy_cfg["combined_kl_factor"],
-                    "combined_head_logvar_mean": torch.linalg.norm(combined_head_logvar, dim=-1).mean().item(),
-                    "combined_head_logvar_std": torch.std(combined_head_logvar, dim=-1).mean().item(),
-                    "combined_head_mean_mean": torch.linalg.norm(combined_head_mean, dim=-1).mean().item(),
-                    "combined_head_mean_std": torch.std(combined_head_mean, dim=-1).mean().item(),
+                    "combined_head_logvar_mean": torch.linalg.norm(combined_head_logvar, dim=-1).detach().cpu().numpy(),
+                    "combined_head_logvar_std": torch.std(combined_head_logvar, dim=-1).detach().cpu().numpy(),
+                    "combined_head_mean_mean": torch.linalg.norm(combined_head_mean, dim=-1).detach().cpu().numpy(),
+                    "combined_head_mean_std": torch.std(combined_head_mean, dim=-1).detach().cpu().numpy(),
                 }
                 combined_head_std = torch.exp(0.5 * combined_head_logvar)
                 combined_head_eps = torch.randn_like(combined_head_mean)
@@ -304,10 +313,10 @@ class RobotTransformerPolicy(nn.Module):
             else:
                 raise NotImplementedError(f"Unknown infer_mode: {self.policy_cfg['infer_mode']}")
         
-        loss_mse = F.mse_loss(new_actions, expert_actions)
-        loss += loss_mse
+        loss_mse = F.mse_loss(new_actions, expert_actions, reduction="none").mean(dim=-1)
+        loss += loss_mse.mean()
         info = info | {
-            "loss_mse": loss_mse.item(),
+            "loss_mse": loss_mse.detach().cpu().numpy(),
             "loss": loss.item(),
         }
         
@@ -330,7 +339,7 @@ class RobotTransformerPolicy(nn.Module):
                 curr_emb = self.current_proj(current)
                 if self.policy_cfg["current_head_arch"] == "none":
                     pass
-                elif self.policy_cfg["current_head_arch"] == "linear" or self.policy_cfg["current_head_arch"] == "2layer":
+                elif self.policy_cfg["current_head_arch"] == "linear" or self.policy_cfg["current_head_arch"] == "2layer" or self.policy_cfg["current_head_arch"] == "3layer":
                     curr_emb_mean = curr_emb[:, :self.policy_cfg["current_emb_size"]]
                     curr_emb = curr_emb_mean
                 if self.policy_cfg["current_norm"]:
