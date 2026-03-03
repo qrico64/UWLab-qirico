@@ -267,10 +267,10 @@ def train_behavior_cloning(
                 "lr": optimizer.param_groups[0]['lr'],
             }
             for k in total_info.keys():
-                data_source, metric_name = k.split('/')
+                data_source, metric_name = k[:k.find('/')], k[k.find('/')+1:]
                 wandblog[f"train_{data_source}/{metric_name}"] = total_info[k] / unique_data_sources_train[data_source]
             for k in total_vinfo.keys():
-                data_source, metric_name = k.split('/')
+                data_source, metric_name = k[:k.find('/')], k[k.find('/')+1:]
                 wandblog[f"val_{data_source}/{metric_name}"] = total_vinfo[k] / unique_data_sources_val[data_source]
             wandb.log(wandblog)
         
@@ -430,7 +430,7 @@ def main():
             }
             if 'rand_noise' in traj.keys():
                 traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]
-                processed_traj['context'][:, CURRENT_DIM:] += traj['rand_noise']
+                processed_traj['context'][:, -LABEL_DIM:] += traj['rand_noise']
             
             processed_data.append(processed_traj)
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM

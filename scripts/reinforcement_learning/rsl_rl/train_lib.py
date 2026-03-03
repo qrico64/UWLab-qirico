@@ -305,10 +305,24 @@ class RobotTransformerPolicy(nn.Module):
                 new_actions = output
             elif self.policy_cfg["infer_mode"] == "residual":
                 new_actions = base_actions + output
+                info = info | {
+                    "shift/mean": torch.mean(output, dim=-1).detach().cpu().numpy(),
+                    "shift/max": torch.max(output, dim=-1).values.detach().cpu().numpy(),
+                    "shift/min": torch.min(output, dim=-1).values.detach().cpu().numpy(),
+                    "shift/std": torch.std(output, dim=-1).detach().cpu().numpy(),
+                }
             elif self.policy_cfg["infer_mode"] == "res_scale_shift":
                 scale = output[:, :self.policy_cfg["label_dim"]]
                 shift = output[:, self.policy_cfg["label_dim"]:]
                 scale = torch.clamp(scale, -2, 2)
+                info = info | {
+                    "scale/mean": torch.mean(scale, dim=-1).detach().cpu().numpy(),
+                    "scale/max": torch.max(scale, dim=-1).values.detach().cpu().numpy(),
+                    "scale/min": torch.min(scale, dim=-1).values.detach().cpu().numpy(),
+                    "scale/std": torch.std(scale, dim=-1).detach().cpu().numpy(),
+                    "shift/mean": torch.mean(shift, dim=-1).detach().cpu().numpy(),
+                    "shift/std": torch.std(shift, dim=-1).detach().cpu().numpy(),
+                }
                 new_actions = base_actions * torch.exp(scale) + shift
             else:
                 raise NotImplementedError(f"Unknown infer_mode: {self.policy_cfg['infer_mode']}")
