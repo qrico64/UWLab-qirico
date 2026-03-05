@@ -13,9 +13,11 @@ import argparse
 import matplotlib.pyplot as plt
 import cur_utils
 from train_lib import RobotTransformerPolicy
+import expert_utils
 
 
 ENABLE_WANDB = True
+expert_model = expert_utils.load_peg_expert("peg_state_rl_expert.pt", device='cuda')[0]
 
 # --- Model Definition ---
 
@@ -159,6 +161,8 @@ def train_behavior_cloning(
         train_mode: str = "single-traj",
         closest_neighbors_radius: float = 0.001,
         warm_start: int = 0,
+        ref_label_means = None,
+        ref_label_stds = None,
     ):
     unique_data_sources_train = {}
     for traj in train_data:
@@ -166,6 +170,13 @@ def train_behavior_cloning(
     unique_data_sources_val = {}
     for traj in val_data:
         unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
+    
+    assert np.allclose(
+        train_data[0]['expert_actions'], 
+        (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
+        rtol=5e-4,
+    )
+    # pred = expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy()
 
     train_loader = DataLoader(
         IndependentTrajectoryDataset(
@@ -603,6 +614,8 @@ def main():
             train_mode=args.train_mode,
             closest_neighbors_radius=args.closest_neighbors_radius,
             warm_start=args.warm_start,
+            ref_label_means=label_means,
+            ref_label_stds=label_stds,
         )
     finally:
         if ENABLE_WANDB:
