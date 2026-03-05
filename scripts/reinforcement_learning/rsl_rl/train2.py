@@ -430,6 +430,7 @@ def main():
                 'expert_actions': traj['actions_expert'],
                 'choosable': traj['obs']['policy2'].shape[0] > 6,
                 'obs_receptive_noise': traj['obs_receptive_noise'],
+                'sys_noise': traj['sys_noise'],
                 'data_source': dataset_name,
                 '__log': traj,
                 # 'choosable': not np.any(traj['rewards'] > 0.11),
@@ -511,6 +512,8 @@ def main():
         'combined_head_arch': args.combined_head_arch,
         'combined_emb_size': args.combined_emb_size,
         'combined_kl_factor': args.combined_kl_factor,
+
+        'state_type': args.state_type,
     }
     # Use the first dataset path for info.pkl lookup (noise scale metadata)
     first_path = DATASET_PATHS[0]
@@ -581,6 +584,7 @@ def main():
         combined_head_arch=args.combined_head_arch,
         combined_emb_size=args.combined_emb_size,
         combined_kl_factor=args.combined_kl_factor,
+        state_type=args.state_type,
     )
     model.to(device)
     if ENABLE_WANDB:

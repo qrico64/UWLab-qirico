@@ -228,12 +228,14 @@ def evaluate_model(
     if base_policy is not None:
         base_policy, base_policy_info = load_robot_policy(base_policy, device=device)
         assert base_policy_info['train_expert']
-        policy = lambda temp_currents: base_policy.get_action(
-            torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
-            temp_currents['policy2'],
-            torch.zeros(len(temp_currents), T_DIM, base_policy_info['label_dim'], device=device),
-            padding_mask=torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
-        )
+        def policy(temp_currents):
+            with torch.no_grad():
+                return base_policy.get_action(
+                    torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
+                    torch.cat([temp_currents['policy2'], torch.zeros(len(temp_currents), 7, device=device)], dim=-1),
+                    torch.zeros(len(temp_currents), T_DIM, base_policy_info['label_dim'], device=device),
+                    padding_mask=torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
+                )
     
     # Correction model stuff
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
@@ -243,10 +245,6 @@ def evaluate_model(
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
     correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
-    
-    assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
-    assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
-    assert correction_model_info['label_dim'] == A_DIM
 
     TRAIN_EXPERT = correction_model_info['infer_mode'] in ["expert", "expert_new"]
 
@@ -356,6 +354,7 @@ def evaluate_model(
                 currents = obs['policy2'][need_residuals].clone()
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
                 cur_base_actions = base_actions[need_residuals].clone()
+                currents = torch.cat([currents, cur_base_actions], dim=-1)
                 residual_actions = correction_model.get_action(contexts, currents, cur_base_actions, padding_mask)
                 base_actions[need_residuals, :] = residual_actions
             if TRAIN_EXPERT:

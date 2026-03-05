@@ -66,6 +66,7 @@ class RobotTransformerPolicy(nn.Module):
             combined_head_arch: str = "none", # Options: "none", "linear", "2layer".
             combined_emb_size: int = 512,
             combined_kl_factor: float = 0.0,
+            state_type: str = "standard", # Options: "standard", "noprevaction", "eeposition", "perfectmu"
         ):
         super().__init__()
 
@@ -92,6 +93,7 @@ class RobotTransformerPolicy(nn.Module):
             combined_head_arch=combined_head_arch,
             combined_emb_size=combined_emb_size,
             combined_kl_factor=combined_kl_factor,
+            state_type=state_type,
         )
 
         self.context_proj = nn.Linear(context_dim, d_model)
@@ -222,10 +224,27 @@ class RobotTransformerPolicy(nn.Module):
             ctx_agg = torch.mean(ctx_out, dim=1)
         
         return ctx_agg
+    
+    def process_current(self, current):
+        assert current.shape[-1] == 45 + 7
+        if self.policy_cfg["state_type"] == "standard":
+            return current[:, :45]
+        elif self.policy_cfg["state_type"] == "noprevaction":
+            return torch.cat([current[:, :6], current[:, 13:45]], dim=-1)
+        elif self.policy_cfg["state_type"] == "eeposition":
+            return current[:, 27:33]
+        elif self.policy_cfg["state_type"] == "state_baseaction":
+            return current
+        elif self.policy_cfg["state_type"] == "perfectmu":
+            raise NotImplementedError(f"Known state_type: {self.policy_cfg['state_type']}")
+        else:
+            raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
 
     def loss(self, context, current, base_actions, expert_actions, padding_mask=None):
         loss = 0
         info = {}
+
+        current = self.process_current(current)
 
         if self.policy_cfg["infer_mode"] == "expert_new":
             new_actions = self.head(current)
@@ -338,6 +357,8 @@ class RobotTransformerPolicy(nn.Module):
 
     def get_action(self, context, current, base_actions, padding_mask=None):
         with torch.no_grad():
+            current = self.process_current(current)
+
             if self.policy_cfg["infer_mode"] == "expert_new":
                 new_actions = self.head(current)
             else:
@@ -416,7 +437,12 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "combined_emb_size": 512,
             "combined_kl_factor": 0.0,
         } | save_dict
+        if 'state_type' not in save_dict:
+            assert save_dict['current_means'].shape == (45,)
+            save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((7,))], axis=0)
+            save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((7,))], axis=0)
         save_dict = {
+            "state_type": "standard",
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
             "head_arch_version": "blocked" if save_dict["use_new_head_arch"] else "ancient",
         } | save_dict
@@ -445,6 +471,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             combined_head_arch=save_dict["combined_head_arch"],
             combined_emb_size=save_dict["combined_emb_size"],
             combined_kl_factor=save_dict["combined_kl_factor"],
+            state_type=save_dict["state_type"],
         )
 
         # load weights
