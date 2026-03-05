@@ -120,14 +120,15 @@ class IndependentTrajectoryDataset(Dataset):
             raise NotImplementedError(self.train_mode)
         
         data_source = traj['data_source']
+        sys_noise = torch.tensor(traj['sys_noise'], dtype=torch.float32)
         
-        return context, current, base_action, expert_action, data_source
+        return context, current, base_action, expert_action, data_source, sys_noise
 
 def collate_fn(batch):
     """
     Custom collator to pad trajectories of different lengths.
     """
-    contexts, currents, base_actions, expert_actions, data_sources = zip(*batch)
+    contexts, currents, base_actions, expert_actions, data_sources, sys_noises = zip(*batch)
     
     # Pad sequences to the max length in this specific batch
     # padded_contexts shape: (Batch, Max_T, Context_Dim)
@@ -142,8 +143,9 @@ def collate_fn(batch):
     currents = torch.stack(currents)
     base_actions = torch.stack(base_actions)
     expert_actions = torch.stack(expert_actions)
+    sys_noises = torch.stack(sys_noises)
     
-    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources
+    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises
 
 def train_behavior_cloning(
         model,
@@ -211,10 +213,11 @@ def train_behavior_cloning(
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         total_info = {}
         
-        for context, current, base_actions, expert_actions, padding_mask, data_sources in pbar:
+        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises in pbar:
             context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
-            
+            sys_noises = sys_noises.to(device)
+
             optimizer.zero_grad()
             loss, info = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
             
@@ -238,9 +241,11 @@ def train_behavior_cloning(
         val_loss = 0
         total_vinfo = {}
         with torch.no_grad():
-            for context, current, base_actions, expert_actions, padding_mask, data_sources in val_loader:
+            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
+                sys_noises = sys_noises.to(device)
+
                 vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
                 val_loss += vloss.item()
 
@@ -317,6 +322,7 @@ def main():
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
+    parser.add_argument("--state_type", type=str, default="standard", help="Options: standard, noprevaction, eeposition, perfectmu.")
 
     # Mu stuff
     parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
