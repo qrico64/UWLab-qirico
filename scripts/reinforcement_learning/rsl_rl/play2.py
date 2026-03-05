@@ -225,11 +225,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obskeys = list(obs.keys() - {'rgb', 'policy_aaaaaa'})
     current_episodes = [
         {
-            "obs": {k: [] for k in obskeys},
+            "obs": {
+                **{k: [] for k in obskeys},
+                'policy_aaaaaa': {
+                    'receptive_asset_pose': [],
+                    'insertive_asset_pose': [],
+                },
+            },
             "actions": [],
             "rewards": [],
             "dones": [],
-            "next_obs": {k: [] for k in obskeys},
+            "next_obs": {
+                **{k: [] for k in obskeys},
+                'policy_aaaaaa': {
+                    'receptive_asset_pose': [],
+                    'insertive_asset_pose': [],
+                },
+            },
             "actions_expert": [],
             "sys_noise": np.random.normal(size=action_shape[1:], scale=sys_noise_scale),
             "rand_noise": [],
@@ -257,15 +269,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions_expert = policy(obs)
             actions_expert_np = to_numpy(actions_expert)
 
-            obs_tweaked = obs.clone()
             receptive_noise = np.stack([current_episodes[i]["obs_receptive_noise"] for i in range(env.num_envs)], axis=0)
             insertive_noise = np.stack([current_episodes[i]["obs_insertive_noise"] for i in range(env.num_envs)], axis=0)
-            receptive_noise = torch.tensor(receptive_noise, dtype=torch.float32, device=args_cli.device)
-            insertive_noise = torch.tensor(insertive_noise, dtype=torch.float32, device=args_cli.device)
-            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(env.num_envs, 5, 6) + receptive_noise.unsqueeze(1)
-            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(env.num_envs, 5, 6) + insertive_noise.unsqueeze(1)
-            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(env.num_envs, 30)
-            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(env.num_envs, 30)
+            obs_tweaked = cur_utils.apply_obs_noise(obs, receptive_noise, insertive_noise)
 
             actions = policy(obs_tweaked)
 
@@ -303,6 +309,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 for k in obskeys:
                     current_episodes[i]["obs"][k].append(obs_np[k][i])
                     current_episodes[i]["next_obs"][k].append(next_obs_np[k][i])
+                current_episodes[i]["obs"]["policy_aaaaaa"]["receptive_asset_pose"].append(obs_np['policy_aaaaaa']['receptive_asset_pose'][i])
+                current_episodes[i]["obs"]["policy_aaaaaa"]["insertive_asset_pose"].append(obs_np['policy_aaaaaa']['insertive_asset_pose'][i])
+                current_episodes[i]["next_obs"]["policy_aaaaaa"]["receptive_asset_pose"].append(next_obs_np['policy_aaaaaa']['receptive_asset_pose'][i])
+                current_episodes[i]["next_obs"]["policy_aaaaaa"]["insertive_asset_pose"].append(next_obs_np['policy_aaaaaa']['insertive_asset_pose'][i])
+                
                 current_episodes[i]["actions"].append(actions_np[i])
                 current_episodes[i]["rand_noise"].append(rand_noise[i] * general_noise_scales)
                 current_episodes[i]["actions_expert"].append(actions_expert_np[i])
@@ -312,12 +323,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 # If episode ended, finalize the trajectory
                 if dones_np[i]:
                     # Convert lists to numpy arrays
+                    for k in obskeys:
+                        current_episodes[i]["obs"][k] = np.array(current_episodes[i]["obs"][k])
+                        current_episodes[i]["next_obs"][k] = np.array(current_episodes[i]["next_obs"][k])
+                    current_episodes[i]["obs"]["policy_aaaaaa"]["receptive_asset_pose"] = np.array(current_episodes[i]["obs"]["policy_aaaaaa"]["receptive_asset_pose"])
+                    current_episodes[i]["obs"]["policy_aaaaaa"]["insertive_asset_pose"] = np.array(current_episodes[i]["obs"]["policy_aaaaaa"]["insertive_asset_pose"])
+                    current_episodes[i]["next_obs"]["policy_aaaaaa"]["receptive_asset_pose"] = np.array(current_episodes[i]["next_obs"]["policy_aaaaaa"]["receptive_asset_pose"])
+                    current_episodes[i]["next_obs"]["policy_aaaaaa"]["insertive_asset_pose"] = np.array(current_episodes[i]["next_obs"]["policy_aaaaaa"]["insertive_asset_pose"])
+
                     trajectory = {
-                        "obs": {k: np.array(v) for k, v in current_episodes[i]["obs"].items()},
+                        "obs": current_episodes[i]["obs"],
                         "actions": np.array(current_episodes[i]["actions"]),
                         "rewards": np.array(current_episodes[i]["rewards"]),
                         "dones": np.array(current_episodes[i]["dones"]),
-                        "next_obs": {k: np.array(v) for k, v in current_episodes[i]["next_obs"].items()},
+                        "next_obs": current_episodes[i]["next_obs"],
                         "actions_expert": np.array(current_episodes[i]["actions_expert"]),
                         "sys_noise": np.array(current_episodes[i]["sys_noise"]),
                         "rand_noise": np.array(current_episodes[i]["rand_noise"]),
@@ -340,11 +359,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     
                     # Reset buffer for this env
                     current_episodes[i] = {
-                        "obs": {k: [] for k in obskeys},
+                        "obs": {
+                            **{k: [] for k in obskeys},
+                            'policy_aaaaaa': {
+                                'receptive_asset_pose': [],
+                                'insertive_asset_pose': [],
+                            },
+                        },
                         "actions": [],
                         "rewards": [],
                         "dones": [],
-                        "next_obs": {k: [] for k in obskeys},
+                        "next_obs": {
+                            **{k: [] for k in obskeys},
+                            'policy_aaaaaa': {
+                                'receptive_asset_pose': [],
+                                'insertive_asset_pose': [],
+                            },
+                        },
                         "actions_expert": [],
                         "sys_noise": np.random.normal(size=action_shape[1:], scale=sys_noise_scale),
                         "rand_noise": [],

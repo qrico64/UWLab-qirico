@@ -212,7 +212,7 @@ def zfill(x: torch.Tensor, horizon: int, dim: int = 1):
 
 def apply_obs_noise(obs: torch.Tensor, receptive_noise: np.ndarray, insertive_noise: np.ndarray = None):
     N = obs.shape[0]
-    device = obs.device
+    device = obs['policy'].device
     if insertive_noise is None:
         insertive_noise = np.zeros_like(receptive_noise)
 
