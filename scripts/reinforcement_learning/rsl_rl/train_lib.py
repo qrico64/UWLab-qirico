@@ -124,23 +124,24 @@ class RobotTransformerPolicy(nn.Module):
             raise NotImplementedError(f"Unknown mu_head_arch: {mu_head_arch}")
         
         # current head
+        current_head_in_dim = current_dim
         if current_head_arch == "none":
             assert current_emb_size == d_model, f"{current_emb_size} != {d_model}"
-            self.current_proj = nn.Linear(current_dim, current_emb_size)
+            self.current_proj = nn.Linear(current_head_in_dim, current_emb_size)
         elif current_head_arch == "linear":
             assert not current_norm
-            self.current_proj = nn.Linear(current_dim, current_emb_size * 2)
+            self.current_proj = nn.Linear(current_head_in_dim, current_emb_size * 2)
         elif current_head_arch == "2layer":
             assert not current_norm
             self.current_proj = nn.Sequential(
-                nn.Linear(current_dim, current_emb_size * 4),
+                nn.Linear(current_head_in_dim, current_emb_size * 4),
                 nn.ReLU(),
                 nn.Linear(current_emb_size * 4, current_emb_size * 2),
             )
         elif current_head_arch == "3layer":
             assert not current_norm
             self.current_proj = nn.Sequential(
-                nn.Linear(current_dim, current_emb_size * 4),
+                nn.Linear(current_head_in_dim, current_emb_size * 4),
                 nn.ReLU(),
                 nn.Linear(current_emb_size * 4, current_emb_size * 4),
                 nn.ReLU(),
@@ -226,7 +227,7 @@ class RobotTransformerPolicy(nn.Module):
         return ctx_agg
     
     def process_current(self, current):
-        assert current.shape[-1] == 45 + 7
+        assert current.shape[-1] == 45 + 7 or self.policy_cfg["state_type"] == "perfectmu"
         if self.policy_cfg["state_type"] == "standard":
             return current[:, :45]
         elif self.policy_cfg["state_type"] == "noprevaction":
@@ -238,7 +239,7 @@ class RobotTransformerPolicy(nn.Module):
         elif self.policy_cfg["state_type"] == "baseaction_only":
             return current[:, 45:]
         elif self.policy_cfg["state_type"] == "perfectmu":
-            raise NotImplementedError(f"Known state_type: {self.policy_cfg['state_type']}")
+            return torch.cat([current[:, :45], current[:, 52:]], dim=-1)
         else:
             raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
 
