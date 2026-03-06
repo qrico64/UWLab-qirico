@@ -235,6 +235,8 @@ class RobotTransformerPolicy(nn.Module):
             return current[:, 27:33]
         elif self.policy_cfg["state_type"] == "state_baseaction":
             return current
+        elif self.policy_cfg["state_type"] == "baseaction_only":
+            return current[:, 45:]
         elif self.policy_cfg["state_type"] == "perfectmu":
             raise NotImplementedError(f"Known state_type: {self.policy_cfg['state_type']}")
         else:

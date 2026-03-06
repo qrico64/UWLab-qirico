@@ -1,5 +1,13 @@
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar1/residual_o10r2_stateonly
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar5/residual_o10r2_stateonly_repro
 export EPOCHS=1000
+
+export OBSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
+export SYSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb26/fourthtry_receptive_0_sys3_rand2_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/cut-trajectories.pkl
+
+mkdir -p $SAVE_PATH
+cp d3.sh $SAVE_PATH/
+cp scripts/reinforcement_learning/rsl_rl/train2.py $SAVE_PATH/
+cp scripts/reinforcement_learning/rsl_rl/train_lib.py $SAVE_PATH/
 
 python scripts/reinforcement_learning/rsl_rl/train2.py \
     --lr 0.0003 \
@@ -9,7 +17,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --dropout 0.1 \
     --batch_size 256 \
     --save_path $SAVE_PATH \
-    --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl \
+    --dataset_path $OBSNOISE_DS \
     --train_mode full-traj \
     --closest_neighbors_radius 0.001 \
     --warm_start 10 \

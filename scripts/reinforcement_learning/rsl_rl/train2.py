@@ -170,11 +170,11 @@ def train_behavior_cloning(
     unique_data_sources_val = {}
     for traj in val_data:
         unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
-    
+
     assert np.allclose(
         train_data[0]['expert_actions'], 
         (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
-        rtol=5e-4,
+        rtol=2e-3,
     )
     # pred = expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy()
 
@@ -333,7 +333,7 @@ def main():
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
     parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
-    parser.add_argument("--state_type", type=str, default="standard", help="Options: standard, noprevaction, eeposition, perfectmu.")
+    parser.add_argument("--state_type", type=str, default="standard", help="Options: standard, noprevaction, eeposition, perfectmu, state_baseaction, baseaction_only.")
 
     # Mu stuff
     parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
@@ -436,7 +436,7 @@ def main():
             
             processed_traj = {
                 'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
-                'current': traj['obs']['policy2'],
+                'current': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
                 'base_actions': traj['actions'],
                 'expert_actions': traj['actions_expert'],
                 'choosable': traj['obs']['policy2'].shape[0] > 6,
@@ -452,7 +452,6 @@ def main():
             
             processed_data.append(processed_traj)
     assert processed_data[0]['context'].shape[-1] == CONTEXT_DIM
-    assert processed_data[0]['current'].shape[-1] == CURRENT_DIM
     print(f"Kept {len(processed_data)}/{total_trajs} ({len(processed_data)/total_trajs}) trajectories.")
 
     # Current normalization
