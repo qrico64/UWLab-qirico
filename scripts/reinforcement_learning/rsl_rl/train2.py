@@ -123,14 +123,15 @@ class IndependentTrajectoryDataset(Dataset):
         
         data_source = traj['data_source']
         sys_noise = torch.tensor(traj['sys_noise'], dtype=torch.float32)
+        obs_noise = torch.tensor(traj['obs_receptive_noise'], dtype=torch.float32)
         
-        return context, current, base_action, expert_action, data_source, sys_noise
+        return context, current, base_action, expert_action, data_source, sys_noise, obs_noise
 
 def collate_fn(batch):
     """
     Custom collator to pad trajectories of different lengths.
     """
-    contexts, currents, base_actions, expert_actions, data_sources, sys_noises = zip(*batch)
+    contexts, currents, base_actions, expert_actions, data_sources, sys_noises, obs_noises = zip(*batch)
     
     # Pad sequences to the max length in this specific batch
     # padded_contexts shape: (Batch, Max_T, Context_Dim)
@@ -146,8 +147,9 @@ def collate_fn(batch):
     base_actions = torch.stack(base_actions)
     expert_actions = torch.stack(expert_actions)
     sys_noises = torch.stack(sys_noises)
+    obs_noises = torch.stack(obs_noises)
     
-    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises
+    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises
 
 def train_behavior_cloning(
         model,
@@ -224,10 +226,11 @@ def train_behavior_cloning(
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         total_info = {}
         
-        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises in pbar:
+        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises in pbar:
             context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
             sys_noises = sys_noises.to(device)
+            obs_noises = obs_noises.to(device)
 
             optimizer.zero_grad()
             loss, info = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
@@ -252,10 +255,11 @@ def train_behavior_cloning(
         val_loss = 0
         total_vinfo = {}
         with torch.no_grad():
-            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises in val_loader:
+            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
                 sys_noises = sys_noises.to(device)
+                obs_noises = obs_noises.to(device)
 
                 vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
                 val_loss += vloss.item()
