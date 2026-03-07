@@ -210,19 +210,24 @@ def zfill(x: torch.Tensor, horizon: int, dim: int = 1):
     return torch.cat([x, pad], dim=dim)
 
 
-def apply_obs_noise(obs: torch.Tensor, receptive_noise: np.ndarray, insertive_noise: np.ndarray = None):
-    N = obs.shape[0]
-    device = obs['policy'].device
+def apply_obs_noise2(obs_policy: torch.Tensor, obs_recpose: torch.Tensor, obs_inspose: torch.Tensor, receptive_noise: np.ndarray, insertive_noise: np.ndarray = None):
+    N = obs_policy.shape[0]
+    device = obs_policy.device
     if insertive_noise is None:
         insertive_noise = np.zeros_like(receptive_noise)
 
-    obs_tweaked = obs.clone()
+    obs_tweaked = obs_policy.clone()
     receptive_noise = torch.tensor(receptive_noise, dtype=torch.float32, device=device)
     insertive_noise = torch.tensor(insertive_noise, dtype=torch.float32, device=device)
-    receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(N, 5, 6) + receptive_noise.unsqueeze(1)
-    insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(N, 5, 6) + insertive_noise.unsqueeze(1)
-    obs_tweaked['policy'][:, :30] = predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)
-    obs_tweaked['policy'][:, -30:] = receptive_state.reshape(N, 30)
+    receptive_state = obs_recpose.reshape(N, 5, 6) + receptive_noise.unsqueeze(1)
+    insertive_state = obs_inspose.reshape(N, 5, 6) + insertive_noise.unsqueeze(1)
+    obs_tweaked[:, :30] = predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)
+    obs_tweaked[:, -30:] = receptive_state.reshape(N, 30)
 
+    return obs_tweaked
+
+def apply_obs_noise(obs: torch.Tensor, receptive_noise: np.ndarray, insertive_noise: np.ndarray = None):
+    obs_tweaked = obs.clone()
+    obs_tweaked['policy'] = apply_obs_noise2(obs['policy'], obs['policy_aaaaaa']['receptive_asset_pose'], obs['policy_aaaaaa']['insertive_asset_pose'], receptive_noise, insertive_noise)
     return obs_tweaked
 

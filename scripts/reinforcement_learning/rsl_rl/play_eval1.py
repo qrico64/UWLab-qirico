@@ -288,10 +288,13 @@ def evaluate_model(
     rec_observations = torch.zeros(N, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=device)
     rec_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
     rec_rewards = torch.zeros(N, N_DIM, T_DIM, dtype=torch.float32, device=device)
+    rec_expert_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
     curstates = torch.zeros(N, dtype=torch.int64, device=device)
     trajectory_start_position = get_starting_position(env)
 
     result_success_distribution = []
+    first_traj_mse_sum = 0.0
+    first_traj_mse_count = 0
     
     obs = env.get_observations()
 
@@ -368,6 +371,7 @@ def evaluate_model(
             cur_timesteps = timesteps[indices, curstates]
             rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
             rec_actions[indices, curstates, cur_timesteps, :] = base_actions
+            rec_expert_actions[indices, curstates, cur_timesteps, :] = expert_actions
             rec_rewards[indices, curstates, cur_timesteps] = reward
             successes[indices, curstates] |= reward >= SUCCESS_THRESHOLD
 
@@ -403,6 +407,7 @@ def evaluate_model(
                     completed_reset[i] = True
                     rec_observations[i] *= 0
                     rec_actions[i] *= 0
+                    rec_expert_actions[i] *= 0
                     rec_rewards[i] *= 0
                     timesteps[i] *= 0
                     successes[i] = False
@@ -439,6 +444,7 @@ def evaluate_model(
 
                     if count_success.sum() % 20 == 0:
                         print(f"First try success rate: {count_success[1] / count_success.sum()}; Second try success rate: {count_success[2] / (count_success.sum() - count_success[1])}")
+                        print(f"Current average MSE: {first_traj_mse_sum / (first_traj_mse_count + 1e-8)}")
                         print(f"{count_success.sum()} {count_success[1]} {count_success[2]}")
                     
                     if count_success.sum() % 100 == 0 and len(result_success_distribution) > 0:
@@ -453,6 +459,7 @@ def evaluate_model(
 
                     rec_observations[i] *= 0
                     rec_actions[i] *= 0
+                    rec_expert_actions[i] *= 0
                     rec_rewards[i] *= 0
                     timesteps[i] *= 0
                     successes[i] = False
@@ -463,6 +470,20 @@ def evaluate_model(
                     starting_positions[i] = get_positions(env.env.env)[i]
                     trajectory_start_position[i] = get_starting_position(env)[i]
                 else:
+                    T = timesteps[i, 0].item()
+                    if T > 0:
+                        context = torch.cat([rec_observations[i, 0], rec_actions[i, 0]], dim=1).repeat(T, 1, 1)
+                        current = rec_observations[i, 0, :T]
+                        cur_base_actions = rec_actions[i, 0, :T]
+                        current = torch.cat([current, cur_base_actions], dim=-1)
+                        padding_mask = torch.arange(T_DIM, device=device).repeat(T, 1) >= T
+                        pred_actions = correction_model.get_action(context, current, cur_base_actions)
+                        actual_expert_actions = rec_expert_actions[i, 0, :T]
+                        residual_mse = torch.linalg.norm(pred_actions - actual_expert_actions, dim=-1).mean()
+                        if (torch.linalg.norm(cur_base_actions, dim=-1) < 300).all():
+                            first_traj_mse_sum += residual_mse.item()
+                            first_traj_mse_count += 1
+
                     curstates[i] += 1
                     set_positions_completely(env.env.env, starting_positions[i], i)
         
@@ -473,6 +494,12 @@ def evaluate_model(
     print(f"Base policy at {BASE_POLICY_FILE}")
     print(f"Eval mode: {eval_mode}")
     final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
+
+    avg_first_traj_mse = first_traj_mse_sum / first_traj_mse_count if first_traj_mse_count > 0 else float("nan")
+    with open(VIZ_DIRECTORY / "first_traj_mse.txt", 'w') as f:
+        f.write(f"average_mse {avg_first_traj_mse}\n")
+        f.write(f"num_trajectories {first_traj_mse_count}\n")
+
     with open(VIZ_DIRECTORY / "final_success_rate.txt", 'w') as f:
         f.write(f"{CORRECTION_MODEL_FILE}\n")
         f.write(f"{BASE_POLICY_FILE}\n")
