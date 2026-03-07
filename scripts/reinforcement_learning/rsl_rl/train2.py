@@ -17,7 +17,6 @@ import expert_utils
 
 
 ENABLE_WANDB = True
-expert_model = expert_utils.load_peg_expert("peg_state_rl_expert.pt", device='cuda')[0]
 
 # --- Model Definition ---
 
@@ -192,10 +191,11 @@ def train_behavior_cloning(
     for traj in val_data:
         unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
 
+    expert_model = expert_utils.load_peg_expert("peg_state_rl_expert.pt", device='cuda')[0]
     assert np.allclose(
         train_data[0]['expert_actions'], 
         (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
-        rtol=2e-3,
+        atol=1e-5,
     )
     assert np.allclose(
         train_data[0]['current'][0][:6],

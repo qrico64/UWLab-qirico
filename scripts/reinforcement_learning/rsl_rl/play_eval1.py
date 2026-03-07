@@ -295,6 +295,7 @@ def evaluate_model(
     result_success_distribution = []
     first_traj_mse_sum = 0.0
     first_traj_mse_count = 0
+    mse_list = []
     
     obs = env.get_observations()
 
@@ -480,9 +481,10 @@ def evaluate_model(
                         pred_actions = correction_model.get_action(context, current, cur_base_actions)
                         actual_expert_actions = rec_expert_actions[i, 0, :T]
                         residual_mse = torch.linalg.norm(pred_actions - actual_expert_actions, dim=-1).mean()
-                        if (torch.linalg.norm(cur_base_actions, dim=-1) < 300).all():
+                        if (torch.linalg.norm(cur_base_actions, dim=-1) < 100).all():
                             first_traj_mse_sum += residual_mse.item()
                             first_traj_mse_count += 1
+                        mse_list.append(residual_mse.item())
 
                     curstates[i] += 1
                     set_positions_completely(env.env.env, starting_positions[i], i)
@@ -497,6 +499,8 @@ def evaluate_model(
 
     avg_first_traj_mse = first_traj_mse_sum / first_traj_mse_count if first_traj_mse_count > 0 else float("nan")
     with open(VIZ_DIRECTORY / "first_traj_mse.txt", 'w') as f:
+        f.write(f"{mse_list}\n")
+        f.write(f"threshold 100 on base_actions")
         f.write(f"average_mse {avg_first_traj_mse}\n")
         f.write(f"num_trajectories {first_traj_mse_count}\n")
 

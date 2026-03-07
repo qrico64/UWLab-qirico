@@ -262,21 +262,6 @@ class RobotTransformerPolicy(nn.Module):
         else:
             ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
 
-            # target mu
-            if target_mu is not None:
-                N, T_MU = target_mu.shape
-                if T_MU < ctx_agg.shape[1]:
-                    target_mu = F.pad(target_mu, (0, ctx_agg.shape[1] - T_MU, 0, 0), value=0.0)
-                elif T_MU > ctx_agg.shape[1]:
-                    raise Exception(f"{T_MU} > {ctx_agg.shape[1]}")
-                target_mu_loss = F.mse_loss(ctx_agg, target_mu, reduction="none").mean(dim=-1)
-                TARGET_MU_MULTIPLIER = 1
-                loss += TARGET_MU_MULTIPLIER * target_mu_loss.mean()
-                info = info | {
-                    "target_mu_loss": TARGET_MU_MULTIPLIER * target_mu_loss.detach().cpu().numpy().mean(),
-                    "target_mu_multiplier": TARGET_MU_MULTIPLIER,
-                }
-
             # mu head
             if self.policy_cfg["mu_head_arch"] == "none":
                 mu_emb = ctx_agg
@@ -298,6 +283,21 @@ class RobotTransformerPolicy(nn.Module):
                 mu_std = torch.exp(0.5 * mu_logvar)
                 eps = torch.randn_like(mu_mean)
                 mu_emb = mu_mean + eps * mu_std
+
+            # target mu
+            if target_mu is not None:
+                N, T_MU = target_mu.shape
+                if T_MU < mu_emb.shape[1]:
+                    target_mu = F.pad(target_mu, (0, mu_emb.shape[1] - T_MU, 0, 0), value=0.0)
+                elif T_MU > mu_emb.shape[1]:
+                    raise Exception(f"{T_MU} > {mu_emb.shape[1]}")
+                target_mu_loss = F.mse_loss(mu_emb, target_mu, reduction="none").mean(dim=-1)
+                TARGET_MU_MULTIPLIER = 1
+                loss += TARGET_MU_MULTIPLIER * target_mu_loss.mean()
+                info = info | {
+                    "target_mu_loss": TARGET_MU_MULTIPLIER * target_mu_loss.detach().cpu().numpy().mean(),
+                    "target_mu_multiplier": TARGET_MU_MULTIPLIER,
+                }
 
             # current head
             curr_emb = self.current_proj(current)
