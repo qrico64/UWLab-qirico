@@ -6,7 +6,7 @@ import os
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb15/fourthtry_receptive_0.01_with_randnoise_4.0/job-True-0.0-4.0-100000-60--0.01-0.0/trajectories.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/sys3r2_dataset_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/trajectories.pkl"
     SAVEFILE = os.path.join(os.path.dirname(FILENAME), "cut-" + os.path.basename(FILENAME))
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
@@ -28,9 +28,13 @@ def main():
         traj['rewards'] = traj['rewards'][:cutoff]
         traj['actions'] = traj['actions'][:cutoff]
         traj['actions_expert'] = traj['actions_expert'][:cutoff]
-        for k in traj['obs'].keys():
+        for k in traj['obs'].keys() - {'policy_aaaaaa'}:
             traj['obs'][k] = traj['obs'][k][:cutoff]
             traj['next_obs'][k] = traj['next_obs'][k][:cutoff]
+        if 'policy_aaaaaa' in traj['obs'].keys():
+            for k in traj['obs']['policy_aaaaaa'].keys():
+                traj['obs']['policy_aaaaaa'][k] = traj['obs']['policy_aaaaaa'][k][:cutoff]
+                traj['next_obs']['policy_aaaaaa'][k] = traj['next_obs']['policy_aaaaaa'][k][:cutoff]
         assert traj['dones'].sum() == 1
         traj['dones'] = traj['dones'][-cutoff:]
         if 'rand_noise' in traj:
