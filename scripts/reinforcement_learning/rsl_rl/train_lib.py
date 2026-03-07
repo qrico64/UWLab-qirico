@@ -116,9 +116,17 @@ class RobotTransformerPolicy(nn.Module):
             self.mu_head = nn.Linear(d_model, mu_size * 2)
         elif mu_head_arch == "2layer":
             self.mu_head = nn.Sequential(
-                nn.Linear(d_model, d_model * 2),
+                nn.Linear(d_model, d_model * 4),
                 nn.ReLU(),
-                nn.Linear(d_model * 2, mu_size * 2),
+                nn.Linear(d_model * 4, mu_size * 2),
+            )
+        elif mu_head_arch == "3layer":
+            self.mu_head = nn.Sequential(
+                nn.Linear(d_model, d_model * 4),
+                nn.ReLU(),
+                nn.Linear(d_model * 4, d_model * 4),
+                nn.ReLU(),
+                nn.Linear(d_model * 4, mu_size * 2),
             )
         else:
             raise NotImplementedError(f"Unknown mu_head_arch: {mu_head_arch}")
