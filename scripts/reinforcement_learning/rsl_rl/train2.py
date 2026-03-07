@@ -59,6 +59,8 @@ class IndependentTrajectoryDataset(Dataset):
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
         elif train_mode == "full-traj":
             self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
+        elif train_mode == "perfect-coverage":
+            self.choosable_trajs = [traj for traj in data if traj.get('choosable', False)]
         elif train_mode == "expert":
             self.choosable_trajs = []
             self.context_dim = data[0]['context'].shape[-1]
@@ -85,6 +87,10 @@ class IndependentTrajectoryDataset(Dataset):
 
         # Get the context and label from a "choosable" trajectory
         traj = self.choosable_trajs[idx]
+
+        sys_noise = torch.tensor(traj['sys_noise'], dtype=torch.float32)
+        obs_noise = torch.tensor(traj['obs_receptive_noise'], dtype=torch.float32)
+        _ref_traj = None
 
         if self.train_mode == "closest-neighbors":
             context = torch.tensor(traj['context'], dtype=torch.float32)
@@ -118,20 +124,31 @@ class IndependentTrajectoryDataset(Dataset):
             current = torch.tensor(traj['current'][zt], dtype=torch.float32)
             base_action = torch.tensor(traj['base_actions'][zt], dtype=torch.float32)
             expert_action = torch.tensor(traj['expert_actions'][zt], dtype=torch.float32)
+        elif self.train_mode == "perfect-coverage":
+            context = torch.tensor(traj['context'], dtype=torch.float32)
+            si = random.randint(0, len(self.choosable_trajs) - 1)
+            second_traj = self.choosable_trajs[si]
+            st = random.randint(0, second_traj['current'].shape[0] - 1)
+            current = torch.tensor(second_traj['current'][st], dtype=torch.float32)
+            base_action = torch.tensor(second_traj['base_actions'][st], dtype=torch.float32)
+            expert_action = torch.tensor(second_traj['expert_actions'][st], dtype=torch.float32)
+            _ref_traj = (
+                second_traj['__log']['obs']['policy'][st],
+                second_traj['__log']['obs']['policy_aaaaaa']['receptive_asset_pose'][st],
+                second_traj['__log']['obs']['policy_aaaaaa']['insertive_asset_pose'][st],
+            )
         else:
             raise NotImplementedError(self.train_mode)
         
         data_source = traj['data_source']
-        sys_noise = torch.tensor(traj['sys_noise'], dtype=torch.float32)
-        obs_noise = torch.tensor(traj['obs_receptive_noise'], dtype=torch.float32)
         
-        return context, current, base_action, expert_action, data_source, sys_noise, obs_noise
+        return context, current, base_action, expert_action, data_source, sys_noise, obs_noise, _ref_traj
 
 def collate_fn(batch):
     """
     Custom collator to pad trajectories of different lengths.
     """
-    contexts, currents, base_actions, expert_actions, data_sources, sys_noises, obs_noises = zip(*batch)
+    contexts, currents, base_actions, expert_actions, data_sources, sys_noises, obs_noises, _ref_trajs = zip(*batch)
     
     # Pad sequences to the max length in this specific batch
     # padded_contexts shape: (Batch, Max_T, Context_Dim)
@@ -149,7 +166,7 @@ def collate_fn(batch):
     sys_noises = torch.stack(sys_noises)
     obs_noises = torch.stack(obs_noises)
     
-    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises
+    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs
 
 def train_behavior_cloning(
         model,
@@ -165,6 +182,8 @@ def train_behavior_cloning(
         warm_start: int = 0,
         ref_label_means = None,
         ref_label_stds = None,
+        ref_current_means = None,
+        ref_current_stds = None,
     ):
     unique_data_sources_train = {}
     for traj in train_data:
@@ -178,7 +197,16 @@ def train_behavior_cloning(
         (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
         rtol=2e-3,
     )
-    # pred = expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy()
+    assert np.allclose(
+        train_data[0]['current'][0][:6],
+        (train_data[0]['__log']['obs']['policy'][0][:6] - ref_current_means[:6]) / ref_current_stds[:6],
+        rtol=1e-4,
+    )
+    assert np.allclose(
+        train_data[0]['current'][0][39:45],
+        (train_data[0]['__log']['obs']['policy'][0][195:201] - ref_current_means[39:45]) / ref_current_stds[39:45],
+        rtol=1e-4,
+    )
 
     train_loader = DataLoader(
         IndependentTrajectoryDataset(
@@ -226,11 +254,22 @@ def train_behavior_cloning(
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         total_info = {}
         
-        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises in pbar:
+        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs in pbar:
             context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
             sys_noises = sys_noises.to(device)
             obs_noises = obs_noises.to(device)
+
+            if train_mode == "perfect-coverage":
+                assert _ref_trajs[0] is not None
+                _ref_label_means = torch.tensor(ref_label_means, dtype=torch.float32, device=device)
+                _ref_label_stds = torch.tensor(ref_label_stds, dtype=torch.float32, device=device)
+                _ref_obss = torch.stack([torch.tensor(rt[0], dtype=torch.float32, device=device) for rt in _ref_trajs])
+                _ref_recposes = torch.stack([torch.tensor(rt[1], dtype=torch.float32, device=device) for rt in _ref_trajs])
+                _ref_insposes = torch.stack([torch.tensor(rt[2], dtype=torch.float32, device=device) for rt in _ref_trajs])
+                _ref_noised_obss = cur_utils.apply_obs_noise2(_ref_obss, _ref_recposes, _ref_insposes, obs_noises.cpu().numpy())
+                _ref_new_actions = (expert_model(_ref_noised_obss) - _ref_label_means) / _ref_label_stds
+                base_actions = _ref_new_actions.to(device)
 
             optimizer.zero_grad()
             loss, info = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
@@ -255,11 +294,22 @@ def train_behavior_cloning(
         val_loss = 0
         total_vinfo = {}
         with torch.no_grad():
-            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises in val_loader:
+            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
                 sys_noises = sys_noises.to(device)
                 obs_noises = obs_noises.to(device)
+
+                if train_mode == "perfect-coverage":
+                    assert _ref_trajs[0] is not None
+                    _ref_label_means = torch.tensor(ref_label_means, dtype=torch.float32, device=device)
+                    _ref_label_stds = torch.tensor(ref_label_stds, dtype=torch.float32, device=device)
+                    _ref_obss = torch.stack([torch.tensor(rt[0], dtype=torch.float32, device=device) for rt in _ref_trajs])
+                    _ref_recposes = torch.stack([torch.tensor(rt[1], dtype=torch.float32, device=device) for rt in _ref_trajs])
+                    _ref_insposes = torch.stack([torch.tensor(rt[2], dtype=torch.float32, device=device) for rt in _ref_trajs])
+                    _ref_noised_obss = cur_utils.apply_obs_noise2(_ref_obss, _ref_recposes, _ref_insposes, obs_noises.cpu().numpy())
+                    _ref_new_actions = (expert_model(_ref_noised_obss) - _ref_label_means) / _ref_label_stds
+                    base_actions = _ref_new_actions.to(device)
 
                 vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
                 val_loss += vloss.item()
@@ -410,6 +460,7 @@ def main():
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb26/fourthtry_receptive_0_sys3_rand2_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/cut-trajectories.pkl": "sysnoise_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl": "obsnoise_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb19/fourthtry_receptive_0006_sys4_rand2_recxgeq05/job-True-4.0-2.0-100000-60--0.006-0.0/cut-trajectories.pkl": "obs0006_sys4_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl": "obsnoise_ds_new",
     }
 
     datasets = []
@@ -619,6 +670,8 @@ def main():
             warm_start=args.warm_start,
             ref_label_means=label_means,
             ref_label_stds=label_stds,
+            ref_current_means=current_means,
+            ref_current_stds=current_stds,
         )
     finally:
         if ENABLE_WANDB:

@@ -3,6 +3,7 @@ export EPOCHS=1000
 
 export OBSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
 export SYSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb26/fourthtry_receptive_0_sys3_rand2_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/cut-trajectories.pkl
+export OBSNOISE_DS_NEW=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
 
 mkdir -p $SAVE_PATH
 cp d3.sh $SAVE_PATH/
@@ -152,8 +153,20 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --num_envs 100 \
   --num_evals 5000 \
   --correction_model $CORRECTION_MODEL \
-  --reset_mode xleq035 \
-  --eval_mode sysnoise3 \
+  --reset_mode recxgeq05 \
+  --eval_mode obsnoise001 \
+
+HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
+  --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
+  --checkpoint peg_state_rl_expert.pt \
+  env.scene.insertive_object=peg \
+  env.scene.receptive_object=peghole \
+  --headless \
+  --num_envs 100 \
+  --num_evals 20000 \
+  --correction_model $CORRECTION_MODEL \
+  --reset_mode none \
+  --eval_mode obsnoise001 \
 '
 
 
