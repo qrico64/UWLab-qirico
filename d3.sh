@@ -1,4 +1,4 @@
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar5/residual_o10r2_stateonly_repro
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar5/residual_o10r2_lr1e_4
 export EPOCHS=1000
 
 export OBSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
@@ -9,9 +9,10 @@ mkdir -p $SAVE_PATH
 cp d3.sh $SAVE_PATH/
 cp scripts/reinforcement_learning/rsl_rl/train2.py $SAVE_PATH/
 cp scripts/reinforcement_learning/rsl_rl/train_lib.py $SAVE_PATH/
+cp scripts/reinforcement_learning/rsl_rl/play_eval1.py $SAVE_PATH/
 
 python scripts/reinforcement_learning/rsl_rl/train2.py \
-    --lr 0.0003 \
+    --lr 0.0001 \
     --epochs $EPOCHS \
     --num_layers 4 \
     --d_model 512 \
@@ -30,9 +31,9 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --d_model_head 2048 \
     --dropout_head 0.3 \
     \
-    --mu_head_arch linear \
+    --mu_head_arch none \
     --mu_size 512 \
-    --mu_kl_factor 0.1 \
+    --mu_kl_factor 0 \
     \
     --current_head_arch none \
     --current_emb_size 512 \
@@ -126,19 +127,6 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   env.scene.receptive_object=peghole \
   --headless \
   --num_envs 100 \
-  --num_evals 20000 \
-  --base_policy $BASE_POLICY \
-  --correction_model $CORRECTION_MODEL \
-  --reset_mode none \
-  --eval_mode default \
-
-HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
-  --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
-  --checkpoint peg_state_rl_expert.pt \
-  env.scene.insertive_object=peg \
-  env.scene.receptive_object=peghole \
-  --headless \
-  --num_envs 100 \
   --num_evals 5000 \
   --correction_model $CORRECTION_MODEL \
   --reset_mode xleq035 \
@@ -151,7 +139,7 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   env.scene.receptive_object=peghole \
   --headless \
   --num_envs 100 \
-  --num_evals 5000 \
+  --num_evals 20000 \
   --correction_model $CORRECTION_MODEL \
   --reset_mode recxgeq05 \
   --eval_mode obsnoise001 \
@@ -164,9 +152,35 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 100 \
   --num_evals 20000 \
+  --base_policy $BASE_POLICY \
+  --correction_model $CORRECTION_MODEL \
+  --reset_mode recxgeq05 \
+  --eval_mode default \
+
+HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
+  --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
+  --checkpoint peg_state_rl_expert.pt \
+  env.scene.insertive_object=peg \
+  env.scene.receptive_object=peghole \
+  --headless \
+  --num_envs 100 \
+  --num_evals 20000 \
   --correction_model $CORRECTION_MODEL \
   --reset_mode none \
   --eval_mode obsnoise001 \
+
+HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
+  --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
+  --checkpoint peg_state_rl_expert.pt \
+  env.scene.insertive_object=peg \
+  env.scene.receptive_object=peghole \
+  --headless \
+  --num_envs 100 \
+  --num_evals 20000 \
+  --base_policy $BASE_POLICY \
+  --correction_model $CORRECTION_MODEL \
+  --reset_mode none \
+  --eval_mode default \
 '
 
 

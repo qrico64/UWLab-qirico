@@ -12,7 +12,7 @@ from tqdm import tqdm
 import argparse
 import matplotlib.pyplot as plt
 import cur_utils
-from train_lib import RobotTransformerPolicy
+from train_lib2 import RobotTransformerPolicy
 import expert_utils
 
 
@@ -179,6 +179,7 @@ def train_behavior_cloning(
         train_mode: str = "single-traj",
         closest_neighbors_radius: float = 0.001,
         warm_start: int = 0,
+        force_mu_conditioning: str = "none",
         ref_label_means = None,
         ref_label_stds = None,
         ref_current_means = None,
@@ -271,8 +272,15 @@ def train_behavior_cloning(
                 _ref_new_actions = (expert_model(_ref_noised_obss) - _ref_label_means) / _ref_label_stds
                 base_actions = _ref_new_actions.to(device)
 
+            if force_mu_conditioning == "none":
+                mu_conditioning = None
+            elif force_mu_conditioning == "obsnoise":
+                mu_conditioning = obs_noises[:, :2]
+            else:
+                raise NotImplementedError(f"{force_mu_conditioning}")
+
             optimizer.zero_grad()
-            loss, info = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
+            loss, info = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask, mu_conditioning=mu_conditioning)
             
             loss.backward()
             optimizer.step()
@@ -311,7 +319,14 @@ def train_behavior_cloning(
                     _ref_new_actions = (expert_model(_ref_noised_obss) - _ref_label_means) / _ref_label_stds
                     base_actions = _ref_new_actions.to(device)
 
-                vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask)
+                if force_mu_conditioning == "none":
+                    mu_conditioning = None
+                elif force_mu_conditioning == "obsnoise":
+                    mu_conditioning = obs_noises[:, :2]
+                else:
+                    raise NotImplementedError(f"{force_mu_conditioning}")
+
+                vloss, vinfo = model.loss(context, current, base_actions, expert_actions, padding_mask=padding_mask, mu_conditioning=mu_conditioning)
                 val_loss += vloss.item()
 
                 for data_source in unique_data_sources_val.keys():
@@ -393,6 +408,8 @@ def main():
     parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
     parser.add_argument("--mu_size", type=int, default=512, help="Dimension of mu.")
     parser.add_argument("--mu_kl_factor", type=float, default=0.0, help="KL factor for mu.")
+    parser.add_argument("--force_mu_conditioning", type=str, default="none", help="Options: none, obsnoise.")
+    parser.add_argument("--force_mu_conditioning_size", type=int, default=2, help="Dimension of forced mu.")
 
     # Curr KL stuff
     parser.add_argument("--current_norm", action="store_true", help="Whether to apply layer normalization to current embeddings.")
@@ -555,9 +572,12 @@ def main():
         'train_percent': args.train_percent,
         'train_expert': TRAIN_EXPERT,
         'infer_mode': args.infer_mode,
+
         'mu_head_arch': args.mu_head_arch,
         'mu_size': args.mu_size,
         'mu_kl_factor': args.mu_kl_factor,
+        'force_mu_conditioning': args.force_mu_conditioning,
+        'force_mu_conditioning_size': args.force_mu_conditioning_size,
 
         'head_arch_version': args.head_arch_version,
         'num_head_layers': args.num_head_layers,
@@ -642,6 +662,8 @@ def main():
         mu_head_arch=args.mu_head_arch,
         mu_size=args.mu_size,
         mu_kl_factor=args.mu_kl_factor,
+        force_mu_conditioning=args.force_mu_conditioning,
+        force_mu_conditioning_size=args.force_mu_conditioning_size,
         current_norm=args.current_norm,
         current_head_arch=args.current_head_arch,
         current_emb_size=args.current_emb_size,
@@ -668,6 +690,7 @@ def main():
             train_mode=args.train_mode,
             closest_neighbors_radius=args.closest_neighbors_radius,
             warm_start=args.warm_start,
+            force_mu_conditioning=args.force_mu_conditioning,
             ref_label_means=label_means,
             ref_label_stds=label_stds,
             ref_current_means=current_means,

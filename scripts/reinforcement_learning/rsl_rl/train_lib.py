@@ -67,6 +67,8 @@ class RobotTransformerPolicy(nn.Module):
             combined_emb_size: int = 512,
             combined_kl_factor: float = 0.0,
             state_type: str = "standard", # Options: "standard", "noprevaction", "eeposition", "perfectmu"
+            force_mu_conditioning: str = "obsnoise", # Options: "none", "obsnoise".
+            force_mu_conditioning_size: int = 2,
         ):
         super().__init__()
 
@@ -94,6 +96,8 @@ class RobotTransformerPolicy(nn.Module):
             combined_emb_size=combined_emb_size,
             combined_kl_factor=combined_kl_factor,
             state_type=state_type,
+            force_mu_conditioning=force_mu_conditioning,
+            force_mu_conditioning_size=force_mu_conditioning_size,
         )
 
         self.context_proj = nn.Linear(context_dim, d_model)
@@ -107,22 +111,24 @@ class RobotTransformerPolicy(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
 
         # mu head
+        assert force_mu_conditioning in ["none", "obsnoise"], f"{force_mu_conditioning}"
+        mu_head_in_dim = force_mu_conditioning_size if force_mu_conditioning != "none" else d_model
         if mu_head_arch == "none":
-            assert mu_size == d_model, f"{mu_size} != {d_model}"
+            assert mu_size == mu_head_in_dim, f"{mu_size} != {mu_head_in_dim}"
         elif mu_head_arch == "identity":
-            assert mu_size * 2 == d_model, f"{mu_size} * 2 != {d_model}"
+            assert mu_size * 2 == mu_head_in_dim, f"{mu_size} * 2 != {d_model}"
             self.mu_head = nn.Identity()
         elif mu_head_arch == "linear":
-            self.mu_head = nn.Linear(d_model, mu_size * 2)
+            self.mu_head = nn.Linear(mu_head_in_dim, mu_size * 2)
         elif mu_head_arch == "2layer":
             self.mu_head = nn.Sequential(
-                nn.Linear(d_model, d_model * 4),
+                nn.Linear(mu_head_in_dim, d_model * 4),
                 nn.ReLU(),
                 nn.Linear(d_model * 4, mu_size * 2),
             )
         elif mu_head_arch == "3layer":
             self.mu_head = nn.Sequential(
-                nn.Linear(d_model, d_model * 4),
+                nn.Linear(mu_head_in_dim, d_model * 4),
                 nn.ReLU(),
                 nn.Linear(d_model * 4, d_model * 4),
                 nn.ReLU(),
@@ -251,7 +257,10 @@ class RobotTransformerPolicy(nn.Module):
         else:
             raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
 
-    def loss(self, context, current, base_actions, expert_actions, padding_mask=None, target_mu=None):
+    def loss(self, context, current, base_actions, expert_actions, padding_mask=None,
+            target_mu=None,
+            mu_conditioning=None,
+        ):
         loss = 0
         info = {}
 
@@ -260,15 +269,20 @@ class RobotTransformerPolicy(nn.Module):
         if self.policy_cfg["infer_mode"] == "expert_new":
             new_actions = self.head(current)
         else:
-            ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+            if self.policy_cfg["force_mu_conditioning"] != "none":
+                assert mu_conditioning is not None
+                ctx_agg = mu_conditioning
+            else:
+                ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
 
             # mu head
+            MU_DIM = self.policy_cfg["mu_size"]
             if self.policy_cfg["mu_head_arch"] == "none":
                 mu_emb = ctx_agg
             else:
                 mu = self.mu_head(ctx_agg)
-                mu_mean = mu[:, :self.policy_cfg["mu_size"]]
-                mu_logvar = mu[:, self.policy_cfg["mu_size"]:]
+                mu_mean = mu[:, :MU_DIM]
+                mu_logvar = mu[:, MU_DIM:]
                 mu_logvar = torch.clamp(mu_logvar, -20, 20)
                 kl_loss = -0.5 * torch.sum(1 + mu_logvar - mu_mean.pow(2) - mu_logvar.exp(), dim=-1).mean(dim=-1)
                 loss += self.policy_cfg["mu_kl_factor"] * kl_loss.mean()
@@ -288,10 +302,10 @@ class RobotTransformerPolicy(nn.Module):
             # target mu
             if target_mu is not None:
                 N, T_MU = target_mu.shape
-                if T_MU < mu_emb.shape[1]:
-                    target_mu = F.pad(target_mu, (0, mu_emb.shape[1] - T_MU, 0, 0), value=0.0)
-                elif T_MU > mu_emb.shape[1]:
-                    raise Exception(f"{T_MU} > {mu_emb.shape[1]}")
+                if T_MU < MU_DIM:
+                    target_mu = F.pad(target_mu, (0, MU_DIM - T_MU, 0, 0), value=0.0)
+                elif T_MU > MU_DIM:
+                    raise Exception(f"{T_MU} > {MU_DIM}")
                 target_mu_loss = F.mse_loss(mu_emb, target_mu, reduction="none").mean(dim=-1)
                 TARGET_MU_MULTIPLIER = 1
                 loss += TARGET_MU_MULTIPLIER * target_mu_loss.mean()
@@ -385,14 +399,22 @@ class RobotTransformerPolicy(nn.Module):
         
         return loss, info
 
-    def get_action(self, context, current, base_actions, padding_mask=None):
+    def get_action(self, context, current, base_actions, padding_mask=None,
+                mu_conditioning=None,
+            ):
         with torch.no_grad():
             current = self.process_current(current)
 
             if self.policy_cfg["infer_mode"] == "expert_new":
                 new_actions = self.head(current)
             else:
-                ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+                if self.policy_cfg["force_mu_conditioning"] != "none":
+                    assert mu_conditioning is not None
+                    ctx_agg = mu_conditioning
+                else:
+                    ctx_agg = self.forward_transformer(context, padding_mask=padding_mask)
+                
+                # Mu head
                 if self.policy_cfg["mu_head_arch"] == "none":
                     mu_emb = ctx_agg
                 else:
@@ -466,6 +488,8 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "combined_head_arch": "none",
             "combined_emb_size": 512,
             "combined_kl_factor": 0.0,
+            "force_mu_conditioning": "none",
+            "force_mu_conditioning_size": 2,
         } | save_dict
         if 'state_type' not in save_dict:
             assert save_dict['current_means'].shape == (45,)
@@ -502,6 +526,8 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             combined_emb_size=save_dict["combined_emb_size"],
             combined_kl_factor=save_dict["combined_kl_factor"],
             state_type=save_dict["state_type"],
+            force_mu_conditioning=save_dict["force_mu_conditioning"],
+            force_mu_conditioning_size=save_dict["force_mu_conditioning_size"],
         )
 
         # load weights
@@ -552,7 +578,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         out = out_n * self.label_stds + self.label_means
         return out
     
-    def get_action(self, context, current, base_actions, padding_mask=None):
+    def get_action(self, context, current, base_actions, padding_mask=None, mu_conditioning=None):
         context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
         current = torch.as_tensor(current, device=self.device, dtype=torch.float32)
         base_actions = torch.as_tensor(base_actions, device=self.device, dtype=torch.float32)
@@ -565,7 +591,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         else:
             base_actions = base_actions / self.label_stds.clamp_min(eps)
 
-        out_n = self.model.get_action(context_n, current_n, base_actions, padding_mask=padding_mask)
+        out_n = self.model.get_action(context_n, current_n, base_actions, padding_mask=padding_mask, mu_conditioning=mu_conditioning)
         out = out_n * self.label_stds + self.label_means
         return out
 

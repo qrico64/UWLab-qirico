@@ -359,7 +359,13 @@ def evaluate_model(
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
                 cur_base_actions = base_actions[need_residuals].clone()
                 currents = torch.cat([currents, cur_base_actions], dim=-1)
-                residual_actions = correction_model.get_action(contexts, currents, cur_base_actions, padding_mask)
+                
+                if correction_model_info["force_mu_conditioning"] == "none":
+                    mu_conditioning = None
+                elif correction_model_info["force_mu_conditioning"] == "obsnoise":
+                    mu_conditioning = obs_receptive_noise[need_residuals, :2]
+
+                residual_actions = correction_model.get_action(contexts, currents, cur_base_actions, padding_mask, mu_conditioning=mu_conditioning)
                 base_actions[need_residuals, :] = residual_actions
             if TRAIN_EXPERT:
                 base_actions[curstates == 0] *= 0
@@ -478,7 +484,13 @@ def evaluate_model(
                         cur_base_actions = rec_actions[i, 0, :T]
                         current = torch.cat([current, cur_base_actions], dim=-1)
                         padding_mask = torch.arange(T_DIM, device=device).repeat(T, 1) >= T
-                        pred_actions = correction_model.get_action(context, current, cur_base_actions)
+                
+                        if correction_model_info["force_mu_conditioning"] == "none":
+                            mu_conditioning = None
+                        elif correction_model_info["force_mu_conditioning"] == "obsnoise":
+                            mu_conditioning = obs_receptive_noise[i, :2].repeat(T, 1)
+
+                        pred_actions = correction_model.get_action(context, current, cur_base_actions, mu_conditioning=mu_conditioning)
                         actual_expert_actions = rec_expert_actions[i, 0, :T]
                         residual_mse = torch.linalg.norm(pred_actions - actual_expert_actions, dim=-1).mean()
                         if (torch.linalg.norm(cur_base_actions, dim=-1) < 100).all():
