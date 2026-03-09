@@ -25,6 +25,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --warm_start 10 \
     --train_percent 0.8 \
     --infer_mode res_scale_shift \
+    --state_type standard \
     \
     --head_arch_version mlpblock_v1 \
     --num_head_layers 5 \

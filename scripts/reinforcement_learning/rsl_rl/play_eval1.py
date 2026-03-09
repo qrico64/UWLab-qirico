@@ -358,7 +358,8 @@ def evaluate_model(
                 currents = obs['policy2'][need_residuals].clone()
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
                 cur_base_actions = base_actions[need_residuals].clone()
-                currents = torch.cat([currents, cur_base_actions], dim=-1)
+                temp_timesteps = timesteps[need_residuals, 0:1].to(dtype=torch.float32)
+                currents = torch.cat([currents, cur_base_actions, temp_timesteps], dim=-1)
                 
                 if correction_model_info["force_mu_conditioning"] == "none":
                     mu_conditioning = None
@@ -482,7 +483,8 @@ def evaluate_model(
                         context = torch.cat([rec_observations[i, 0], rec_actions[i, 0]], dim=1).repeat(T, 1, 1)
                         current = rec_observations[i, 0, :T]
                         cur_base_actions = rec_actions[i, 0, :T]
-                        current = torch.cat([current, cur_base_actions], dim=-1)
+                        temp_timesteps = torch.arange(T, dtype=torch.float32, device=device).unsqueeze(1)
+                        current = torch.cat([current, cur_base_actions, temp_timesteps], dim=-1)
                         padding_mask = torch.arange(T_DIM, device=device).repeat(T, 1) >= T
                 
                         if correction_model_info["force_mu_conditioning"] == "none":

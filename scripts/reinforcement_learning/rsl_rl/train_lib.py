@@ -241,7 +241,8 @@ class RobotTransformerPolicy(nn.Module):
         return ctx_agg
     
     def process_current(self, current):
-        assert current.shape[-1] == 45 + 7 or self.policy_cfg["state_type"] == "perfectmu"
+        if self.policy_cfg["state_type"] not in ["perfectmu", "timestep"]:
+            assert current.shape[-1] == 45 + 7
         if self.policy_cfg["state_type"] == "standard":
             return current[:, :45]
         elif self.policy_cfg["state_type"] == "noprevaction":
@@ -249,11 +250,13 @@ class RobotTransformerPolicy(nn.Module):
         elif self.policy_cfg["state_type"] == "eeposition":
             return current[:, 27:33]
         elif self.policy_cfg["state_type"] == "state_baseaction":
-            return current
+            return current[:, :52]
         elif self.policy_cfg["state_type"] == "baseaction_only":
-            return current[:, 45:]
+            return current[:, 45:52]
         elif self.policy_cfg["state_type"] == "perfectmu":
             return torch.cat([current[:, :45], current[:, 52:]], dim=-1)
+        elif self.policy_cfg["state_type"] == "timestep":
+            return torch.cat([current[:, 52:53]], dim=-1)
         else:
             raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
 
