@@ -12,7 +12,7 @@ from tqdm import tqdm
 import argparse
 import matplotlib.pyplot as plt
 import cur_utils
-from train_lib2 import RobotTransformerPolicy
+from train_lib import RobotTransformerPolicy
 import expert_utils
 
 
