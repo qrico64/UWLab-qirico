@@ -241,8 +241,8 @@ class RobotTransformerPolicy(nn.Module):
         return ctx_agg
     
     def process_current(self, current):
-        if self.policy_cfg["state_type"] not in ["perfectmu", "timestep"]:
-            assert current.shape[-1] == 45 + 7
+        if self.policy_cfg["state_type"] not in ["perfectmu"]:
+            assert current.shape[-1] == 45 + 7 + 1
         if self.policy_cfg["state_type"] == "standard":
             return current[:, :45]
         elif self.policy_cfg["state_type"] == "noprevaction":
