@@ -1092,15 +1092,28 @@ class MultiResetManager(ManagerTermBase):
 
             all_insertive_poses = torch.stack(dataset['initial_state']['rigid_object']['insertive_object']['root_pose'], dim=0)
             all_receptive_poses = torch.stack(dataset['initial_state']['rigid_object']['receptive_object']['root_pose'], dim=0)
+            all_insertive_poses_discrete = torch.floor(all_insertive_poses[:, 1] / 0.05 + 2).to(dtype=torch.int64)
+            all_receptive_poses_discrete = torch.floor(all_receptive_poses[:, 1] / 0.05 + 2).to(dtype=torch.int64)
+            init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
+            init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
             if reset_mode == "xleq035":
-                init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.35) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
-                init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.35) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+                init_indices_mask &= (all_insertive_poses[:, 0] < 0.35) & (all_receptive_poses[:, 0] < 0.35)
             elif reset_mode == "recxgeq05":
-                init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
-                init_indices_mask &= (all_receptive_poses[:, 0] > 0.5) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+                init_indices_mask &= (all_receptive_poses[:, 0] > 0.5)
             elif reset_mode == "none":
-                init_indices_mask = (all_insertive_poses[:, 0] > 0.3) & (all_insertive_poses[:, 0] < 0.55) & (all_insertive_poses[:, 1] > -0.1) & (all_insertive_poses[:, 1] < 0.5)
-                init_indices_mask &= (all_receptive_poses[:, 0] > 0.3) & (all_receptive_poses[:, 0] < 0.55) & (all_receptive_poses[:, 1] > -0.1) & (all_receptive_poses[:, 1] < 0.5)
+                pass
+            elif reset_mode == "y2_id":
+                init_indices_mask &= (all_insertive_poses_discrete % 2 == 0) & (all_receptive_poses_discrete % 2 == 0)
+            elif reset_mode == "y2_ood":
+                init_indices_mask &= (all_insertive_poses_discrete % 2 != 0) | (all_receptive_poses_discrete % 2 != 0)
+            elif reset_mode == "y3_id":
+                init_indices_mask &= (all_insertive_poses_discrete % 3 == 1) & (all_receptive_poses_discrete % 3 == 0)
+            elif reset_mode == "y3_ood":
+                init_indices_mask &= (all_insertive_poses_discrete % 3 != 1) | (all_receptive_poses_discrete % 3 != 0)
+            elif reset_mode == "y4_id":
+                init_indices_mask &= (all_insertive_poses_discrete % 4 == 1) & (all_receptive_poses_discrete % 4 == 1)
+            elif reset_mode == "y4_ood":
+                init_indices_mask &= (all_insertive_poses_discrete % 4 != 1) | (all_receptive_poses_discrete % 4 != 1)
             else:
                 raise NotImplementedError(f"Unsupported reset_mode: {reset_mode}")
             init_indices = torch.nonzero(init_indices_mask).squeeze(-1).to(device=env.device)
