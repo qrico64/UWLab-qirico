@@ -1,14 +1,14 @@
 #!/bin/bash -l
-#SBATCH --job-name=mar5_data_collection        # Job name
-#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05_log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05_log/%j_%x_err.txt         # Error file
-#SBATCH --time=16:00:00            # Time limit (hh:mm:ss)
+#SBATCH --job-name=m9daty2r        # Job name
+#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2/log/%j_%x_err.txt         # Error file
+#SBATCH --time=8:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
-#SBATCH --cpus-per-task=30          # CPUs per task
+#SBATCH --cpus-per-task=6          # CPUs per task
 #SBATCH --gres=gpu:1               # GPUs per node (if needed)
-#SBATCH --mem=300G                  # Memory per node
-#SBATCH --partition=gpu-l40        # Partition (queue) name
+#SBATCH --mem=100G                  # Memory per node
+#SBATCH --partition=gpu-a40        # Partition (queue) name
 #SBATCH --account=weirdlab         # Slurm account/project name
 
 # Load environment
@@ -31,6 +31,10 @@ export APPTAINERENV_OMNI_USER_DATA_PATH=/tmp/qirico/ov/data
 export APPTAINERENV_OMNI_CACHE_PATH=/tmp/qirico/ov/cache
 export APPTAINERENV_TERM=xterm-256color
 mkdir -p $APPTAINERENV_OMNI_USER_DATA_PATH $APPTAINERENV_OMNI_CACHE_PATH
+
+export JOBTMP=/tmp/${USER}_tmp_${SLURM_JOB_ID:-manual}_$$
+mkdir -p "$JOBTMP"
+chmod 700 "$JOBTMP"
 
 apptainer exec --nv \
   --bind /mmfs1/gscratch/stf/:/mmfs1/gscratch/stf/ \
@@ -62,6 +66,6 @@ apptainer exec --nv \
   --num_trajectories 100000 \
   --obs_receptive_noise_scale 0.01 \
   --obs_insertive_noise_scale 0.0 \
-  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05/ \
-  --reset_mode recxgeq05 \
+  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2/ \
+  --reset_mode y2_id \
 '

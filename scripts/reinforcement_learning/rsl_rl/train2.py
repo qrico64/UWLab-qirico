@@ -82,7 +82,11 @@ class IndependentTrajectoryDataset(Dataset):
             current = torch.tensor(self.choosable_currents[idx], dtype=torch.float32)
             fake_base_action = torch.zeros(self.action_dim, dtype=torch.float32)
             expert_action = torch.tensor(self.corresponding_expert_actions[idx], dtype=torch.float32)
-            return fake_context, current, fake_base_action, expert_action
+            fake_data_source = "ds"
+            fake_sys_noise = torch.zeros(self.action_dim, dtype=torch.float32)
+            fake_obs_noise = torch.zeros(self.action_dim, dtype=torch.float32)
+            fake__ref_traj = None
+            return fake_context, current, fake_base_action, expert_action, fake_data_source, fake_sys_noise, fake_obs_noise, fake__ref_traj
 
         # Get the context and label from a "choosable" trajectory
         traj = self.choosable_trajs[idx]
@@ -401,8 +405,10 @@ def main():
     parser.add_argument("--closest_neighbors_radius", type=float, default=0.001, help="If train_mode is closest-neighbors.")
     parser.add_argument("--warm_start", type=int, default=0, help="Number of warm start epochs.")
     parser.add_argument("--train_percent", type=float, default=0.8, help="Percentage of data used for train.")
+    parser.add_argument("--val_percent", type=float, default=None, help="Percentage of data used for val.")
     parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
     parser.add_argument("--state_type", type=str, default="standard", help="Options: standard, noprevaction, eeposition, perfectmu, state_baseaction, baseaction_only.")
+    parser.add_argument("--current_dim", type=int, default=45, help="Dimension of current / state, depends on state_type.")
 
     # Mu stuff
     parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
@@ -452,8 +458,14 @@ def main():
     save_path = args.save_path
     
     CONTEXT_DIM = 45 + 7
-    CURRENT_DIM = 45
+    CURRENT_DIM = args.current_dim
     LABEL_DIM = 7
+
+    TRAIN_PERCENT = args.train_percent
+    VAL_PERCENT = args.val_percent
+    if VAL_PERCENT is None: 
+        VAL_PERCENT = 1 - TRAIN_PERCENT
+    assert TRAIN_PERCENT + VAL_PERCENT <= 1
 
     # Bounds
     RECEPTIVE_LOW = np.array([args.receptive_xlow, args.receptive_ylow])
@@ -478,6 +490,9 @@ def main():
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl": "obsnoise_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb19/fourthtry_receptive_0006_sys4_rand2_recxgeq05/job-True-4.0-2.0-100000-60--0.006-0.0/cut-trajectories.pkl": "obs0006_sys4_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl": "obsnoise_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y4_id_rand2_expert/cut-trajectories.pkl": "y4_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2_expert/cut-trajectories.pkl": "y2_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y3_id_rand2_expert/cut-trajectories.pkl": "y3_ds",
     }
 
     datasets = []
@@ -570,7 +585,8 @@ def main():
         'train_mode': args.train_mode,
         'closest_neighbors_radius': args.closest_neighbors_radius,
         'warm_start': args.warm_start,
-        'train_percent': args.train_percent,
+        'train_percent': TRAIN_PERCENT,
+        'val_percent': VAL_PERCENT,
         'train_expert': TRAIN_EXPERT,
         'infer_mode': args.infer_mode,
 
@@ -642,10 +658,12 @@ def main():
         return
 
     random.shuffle(processed_data)
-    split = int(len(processed_data) * args.train_percent)
+    split = int(len(processed_data) * TRAIN_PERCENT)
+    split2 = split + int(len(processed_data) * VAL_PERCENT)
     train_data = processed_data[:split]
-    val_data = processed_data[split:]
-    print(f"Train percent: {args.train_percent} !")
+    val_data = processed_data[split:split2]
+    print(f"Train percent: {TRAIN_PERCENT} !")
+    print(f"Val percent: {VAL_PERCENT} !")
 
     # Final safeguard: ensure both splits have at least one choosable traj
     if not any(d['choosable'] for d in val_data):
