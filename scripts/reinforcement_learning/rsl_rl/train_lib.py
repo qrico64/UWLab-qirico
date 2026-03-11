@@ -496,8 +496,8 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         } | save_dict
         if 'state_type' not in save_dict:
             assert save_dict['current_means'].shape == (45,)
-            save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((7,))], axis=0)
-            save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((7,))], axis=0)
+            save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((8,))], axis=0)
+            save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((8,))], axis=0)
         save_dict = {
             "state_type": "standard",
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),

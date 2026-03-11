@@ -1,8 +1,8 @@
 #!/bin/bash -l
-#SBATCH --job-name=m9daty2r        # Job name
-#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2/log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2/log/%j_%x_err.txt         # Error file
-#SBATCH --time=8:00:00            # Time limit (hh:mm:ss)
+#SBATCH --job-name=data_drawer        # Job name
+#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id/log/%j_%x_err.txt         # Error file
+#SBATCH --time=20:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
 #SBATCH --cpus-per-task=6          # CPUs per task
@@ -50,22 +50,21 @@ apptainer exec --nv \
   --bind $UW_BASE/logs:/workspace/uwlab/logs \
   --bind $UW_BASE/outputs:/workspace/uwlab/outputs \
   --bind $UW_BASE/data_storage:/workspace/uwlab/data_storage \
+  --bind "$JOBTMP:/tmp" \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
-  --checkpoint peg_state_rl_expert.pt \
-  env.scene.insertive_object=peg \
-  env.scene.receptive_object=peghole \
+  --our_task drawer \
   --headless \
   --num_envs 1000 \
   --use_general_scales \
   --sys_noise_scale 0.0 \
-  --rand_noise_scale 2.0 \
-  --num_trajectories 100000 \
-  --obs_receptive_noise_scale 0.01 \
+  --rand_noise_scale 0 \
+  --num_trajectories 50000 \
+  --obs_receptive_noise_scale 0.0 \
   --obs_insertive_noise_scale 0.0 \
-  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2/ \
-  --reset_mode y2_id \
+  --record_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id/ \
+  --reset_mode y4_id \
 '

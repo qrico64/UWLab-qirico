@@ -196,22 +196,22 @@ def train_behavior_cloning(
     for traj in val_data:
         unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
 
-    expert_model = expert_utils.load_peg_expert("peg_state_rl_expert.pt", device='cuda')[0]
-    assert np.allclose(
-        train_data[0]['expert_actions'], 
-        (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
-        atol=1e-5,
-    )
-    assert np.allclose(
-        train_data[0]['current'][0][:6],
-        (train_data[0]['__log']['obs']['policy'][0][:6] - ref_current_means[:6]) / ref_current_stds[:6],
-        rtol=1e-4,
-    )
-    assert np.allclose(
-        train_data[0]['current'][0][39:45],
-        (train_data[0]['__log']['obs']['policy'][0][195:201] - ref_current_means[39:45]) / ref_current_stds[39:45],
-        rtol=1e-4,
-    )
+    # expert_model = expert_utils.load_peg_expert("expert_policies/peg_state_rl_expert.pt", device='cuda')[0]
+    # assert np.allclose(
+    #     train_data[0]['expert_actions'], 
+    #     (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
+    #     atol=1e-5,
+    # )
+    # assert np.allclose(
+    #     train_data[0]['current'][0][:6],
+    #     (train_data[0]['__log']['obs']['policy'][0][:6] - ref_current_means[:6]) / ref_current_stds[:6],
+    #     rtol=1e-4,
+    # )
+    # assert np.allclose(
+    #     train_data[0]['current'][0][39:45],
+    #     (train_data[0]['__log']['obs']['policy'][0][195:201] - ref_current_means[39:45]) / ref_current_stds[39:45],
+    #     rtol=1e-4,
+    # )
 
     train_loader = DataLoader(
         IndependentTrajectoryDataset(
@@ -493,12 +493,15 @@ def main():
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y4_id_rand2_expert/cut-trajectories.pkl": "y4_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y2_id_rand2_expert/cut-trajectories.pkl": "y2_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y3_id_rand2_expert/cut-trajectories.pkl": "y3_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/recxgeq05_id_obsnoise005_rand2/cut-trajectories.pkl": "obsnoise_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/peg_recxgeq05_id_obs003_sys4_r2/cut-trajectories.pkl": "obsnoise_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r2/cut-trajectories.pkl": "drawer_y4_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r05/cut-trajectories.pkl": "drawer_y4_ds",
     }
 
     datasets = []
     total_trajs = 0
     for DATASET_PATH in DATASET_PATHS:
-        assert DATASET_PATH in DATASET_NAMES
         try:
             with open(DATASET_PATH, "rb") as fi:
                 loaded = pickle.load(fi)

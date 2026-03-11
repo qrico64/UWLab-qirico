@@ -46,12 +46,27 @@ parser.add_argument("--utd_ratio", type=float, default=1.0, help="Utd ratio for 
 parser.add_argument("--finetune_arch", type=str, default="lora", help="Options: lora, full.")
 parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate for finetuning.")
 parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035, recxgeq05.")
+parser.add_argument("--our_task", choices=["drawer", "leg", "peg"], default=None)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
+
+# our task specific arguments
+if args_cli.our_task is not None:
+    insertive, receptive, checkpoint = {
+        "drawer": ("fbdrawerbottom", "fbdrawerbox", "expert_policies/fbdrawerbottom_state_rl_expert.pt"),
+        "leg": ("fbleg", "fbtabletop", "expert_policies/fbleg_state_rl_expert.pt"),
+        "peg": ("peg", "peghole", "expert_policies/peg_state_rl_expert.pt"),
+    }[args_cli.our_task]
+    args_cli.checkpoint = checkpoint
+    hydra_args += [
+        f"env.scene.insertive_object={insertive}",
+        f"env.scene.receptive_object={receptive}",
+    ]
+
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True

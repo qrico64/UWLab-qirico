@@ -45,6 +45,7 @@ parser.add_argument("--record_path", type=str, default="trajectories_ynnn.pkl", 
 parser.add_argument("--num_trajectories", type=int, default=10, help="Number of trajectories to record.")
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
 parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035, recxgeq05.")
+parser.add_argument("--our_task", choices=["drawer", "leg", "peg"], default=None)
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -52,6 +53,20 @@ cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
+
+# our task specific arguments
+if args_cli.our_task is not None:
+    insertive, receptive, checkpoint = {
+        "drawer": ("fbdrawerbottom", "fbdrawerbox", "expert_policies/fbdrawerbottom_state_rl_expert.pt"),
+        "leg": ("fbleg", "fbtabletop", "expert_policies/fbleg_state_rl_expert.pt"),
+        "peg": ("peg", "peghole", "expert_policies/peg_state_rl_expert.pt"),
+    }[args_cli.our_task]
+    args_cli.checkpoint = checkpoint
+    hydra_args += [
+        f"env.scene.insertive_object={insertive}",
+        f"env.scene.receptive_object={receptive}",
+    ]
+
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True

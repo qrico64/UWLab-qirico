@@ -43,12 +43,27 @@ parser.add_argument("--base_policy", type=str, default=None, help="Base model .p
 parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035.")
 parser.add_argument("--no_viz", action="store_true", default=False, help="Whether to disable all visualization (including videos).")
 parser.add_argument("--eval_mode", type=str, default='default', help="Options: default, sysnoise3, obsnoise001.")
+parser.add_argument("--our_task", choices=["drawer", "leg", "peg"], default=None)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
+
+# our task specific arguments
+if args_cli.our_task is not None:
+    insertive, receptive, checkpoint = {
+        "drawer": ("fbdrawerbottom", "fbdrawerbox", "expert_policies/fbdrawerbottom_state_rl_expert.pt"),
+        "leg": ("fbleg", "fbtabletop", "expert_policies/fbleg_state_rl_expert.pt"),
+        "peg": ("peg", "peghole", "expert_policies/peg_state_rl_expert.pt"),
+    }[args_cli.our_task]
+    args_cli.checkpoint = checkpoint
+    hydra_args += [
+        f"env.scene.insertive_object={insertive}",
+        f"env.scene.receptive_object={receptive}",
+    ]
+
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -232,7 +247,7 @@ def evaluate_model(
             with torch.no_grad():
                 return base_policy.get_action(
                     torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
-                    torch.cat([temp_currents['policy2'], torch.zeros(len(temp_currents), 7, device=device)], dim=-1),
+                    torch.cat([temp_currents['policy2'], torch.zeros(len(temp_currents), 8, device=device)], dim=-1),
                     torch.zeros(len(temp_currents), T_DIM, base_policy_info['label_dim'], device=device),
                     padding_mask=torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
                 )
