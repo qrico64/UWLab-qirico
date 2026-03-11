@@ -535,7 +535,7 @@ def main():
                 'sys_noise': traj['sys_noise'],
                 'data_source': dataset_name,
                 '__log': traj,
-                # 'choosable': not np.any(traj['rewards'] > 0.11),
+                # 'choosable': not np.any(traj['rewards'] > cur_utils.SUCCESS_THRESHOLD),
             }
             if 'rand_noise' in traj.keys():
                 traj['rand_noise'] = traj['rand_noise'].squeeze()[:processed_traj['current'].shape[0]]

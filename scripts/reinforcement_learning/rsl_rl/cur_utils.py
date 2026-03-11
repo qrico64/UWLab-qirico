@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+SUCCESS_THRESHOLD = 0.09
+
 def axis_angle_to_matrix(axis_angle):
     # axis_angle shape: (N, 3)
     angle = torch.norm(axis_angle, dim=-1, keepdim=True) # (N, 1)

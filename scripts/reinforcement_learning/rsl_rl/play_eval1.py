@@ -345,7 +345,7 @@ def evaluate_model(
 
     # reset environment
 
-    SUCCESS_THRESHOLD = 0.11
+    SUCCESS_THRESHOLD = cur_utils.SUCCESS_THRESHOLD
     global_timestep = 0
     count_success = torch.zeros(N_DIM + 1, dtype=torch.int64, device='cpu')
     while count_success.sum() < num_evals:

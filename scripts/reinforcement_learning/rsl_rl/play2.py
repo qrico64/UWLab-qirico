@@ -360,7 +360,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     recorded_trajectories.append(trajectory)
                     pbar.update(1) # Update progress bar
                     total_recorded += 1
-                    total_successes += int(np.any(np.array(current_episodes[i]["rewards"]) > 0.11))
+                    total_successes += int(np.any(np.array(current_episodes[i]["rewards"]) > cur_utils.SUCCESS_THRESHOLD))
 
                     # --- Save Trajectories ---
                     if len(recorded_trajectories) % 100 == 0:
