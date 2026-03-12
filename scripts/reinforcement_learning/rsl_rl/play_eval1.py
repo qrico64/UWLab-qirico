@@ -319,12 +319,9 @@ def evaluate_model(
     if correction_model_info['obs_insertive_noise_scale'] != 0:
         raise Exception("Right now doesn't support insertive noise!!")
 
-    if correction_model_info['use_noise_scales']:
-        general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=device) / 5
-    else:
-        general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=device)
+    GENERAL_NOISE_SCALES = torch.tensor(cur_utils.GENERAL_NOISE_SCALES, device=device)
 
-    sys_noises = torch.randn(N, A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+    sys_noises = torch.randn(N, A_DIM, device=device) * correction_model_info['sys_noise_scale'] * GENERAL_NOISE_SCALES
     print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
     obs_receptive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
     print(f"Using obs_receptive_noise of {correction_model_info['obs_receptive_noise_scale']}")
@@ -435,7 +432,7 @@ def evaluate_model(
                     timesteps[i] *= 0
                     successes[i] = False
                     curstates[i] *= 0
-                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * GENERAL_NOISE_SCALES
                     obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
                     obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
                     starting_positions[i] = get_positions(env.env.env)[i]
@@ -487,7 +484,7 @@ def evaluate_model(
                     timesteps[i] *= 0
                     successes[i] = False
                     curstates[i] *= 0
-                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * general_noise_scales
+                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * GENERAL_NOISE_SCALES
                     obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
                     obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
                     starting_positions[i] = get_positions(env.env.env)[i]
@@ -529,7 +526,7 @@ def evaluate_model(
     avg_first_traj_mse = first_traj_mse_sum / first_traj_mse_count if first_traj_mse_count > 0 else float("nan")
     with open(VIZ_DIRECTORY / "first_traj_mse.txt", 'w') as f:
         f.write(f"{mse_list}\n")
-        f.write(f"threshold 100 on base_actions")
+        f.write(f"threshold 100 on base_actions\n")
         f.write(f"average_mse {avg_first_traj_mse}\n")
         f.write(f"num_trajectories {first_traj_mse_count}\n")
 

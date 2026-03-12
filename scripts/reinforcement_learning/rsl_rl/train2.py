@@ -127,6 +127,11 @@ class IndependentTrajectoryDataset(Dataset):
             current = torch.tensor(traj['current'][zt], dtype=torch.float32)
             base_action = torch.tensor(traj['base_actions'][zt], dtype=torch.float32)
             expert_action = torch.tensor(traj['expert_actions'][zt], dtype=torch.float32)
+            # _ref_traj = (
+            #     traj['__log']['obs']['policy'][zt],
+            #     traj['__log']['obs']['policy_aaaaaa']['receptive_asset_pose'][zt],
+            #     traj['__log']['obs']['policy_aaaaaa']['insertive_asset_pose'][zt],
+            # )
         elif self.train_mode == "perfect-coverage":
             context = torch.tensor(traj['context'], dtype=torch.float32)
             si = random.randint(0, len(self.choosable_trajs) - 1)
@@ -168,8 +173,14 @@ def collate_fn(batch):
     expert_actions = torch.stack(expert_actions)
     sys_noises = torch.stack(sys_noises)
     obs_noises = torch.stack(obs_noises)
+
+    _ref_trajs_formatted = None if _ref_trajs is None else [
+        torch.stack([torch.tensor(rt[0], dtype=torch.float32) for rt in _ref_trajs]),
+        torch.stack([torch.tensor(rt[1], dtype=torch.float32) for rt in _ref_trajs]),
+        torch.stack([torch.tensor(rt[2], dtype=torch.float32) for rt in _ref_trajs]),
+    ]
     
-    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs
+    return padded_contexts, currents, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs_formatted
 
 def train_behavior_cloning(
         model,
@@ -196,11 +207,15 @@ def train_behavior_cloning(
     unique_data_sources_val = {}
     for traj in val_data:
         unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
+    
+    ref_label_means = torch.tensor(ref_label_means, dtype=torch.float32, device=device)
+    ref_label_stds = torch.tensor(ref_label_stds, dtype=torch.float32, device=device)
+    GENERAL_NOISE_SCALES = torch.tensor(cur_utils.GENERAL_NOISE_SCALES, device=device)
 
     expert_model = expert_utils.load_expert_by_task(our_task, device='cuda')[0]
     assert np.allclose(
         train_data[0]['expert_actions'], 
-        (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
+        ((expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)) - ref_label_means) / ref_label_stds).detach().cpu().numpy(),
         atol=1e-5,
     )
     assert np.allclose(
@@ -260,22 +275,19 @@ def train_behavior_cloning(
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         total_info = {}
         
-        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs in pbar:
+        for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs_formatted in pbar:
             context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
             padding_mask = padding_mask.to(device)
             sys_noises = sys_noises.to(device)
             obs_noises = obs_noises.to(device)
 
             if train_mode == "perfect-coverage":
-                assert _ref_trajs[0] is not None
-                _ref_label_means = torch.tensor(ref_label_means, dtype=torch.float32, device=device)
-                _ref_label_stds = torch.tensor(ref_label_stds, dtype=torch.float32, device=device)
-                _ref_obss = torch.stack([torch.tensor(rt[0], dtype=torch.float32, device=device) for rt in _ref_trajs])
-                _ref_recposes = torch.stack([torch.tensor(rt[1], dtype=torch.float32, device=device) for rt in _ref_trajs])
-                _ref_insposes = torch.stack([torch.tensor(rt[2], dtype=torch.float32, device=device) for rt in _ref_trajs])
-                _ref_noised_obss = cur_utils.apply_obs_noise2(_ref_obss, _ref_recposes, _ref_insposes, obs_noises.cpu().numpy())
-                _ref_new_actions = (expert_model(_ref_noised_obss) - _ref_label_means) / _ref_label_stds
-                base_actions = _ref_new_actions.to(device)
+                _ref_trajs_formatted = [_ref_item.to(device) for _ref_item in _ref_trajs_formatted]
+                _ref_obss, _ref_recposes, _ref_insposes = _ref_trajs_formatted
+                _ref_noised_obss = cur_utils.apply_obs_noise2(_ref_obss, _ref_recposes, _ref_insposes, obs_noises)
+                _ref_new_actions = expert_model(_ref_noised_obss) + sys_noises * GENERAL_NOISE_SCALES
+                _ref_new_actions = (_ref_new_actions - ref_label_means) / ref_label_stds
+                base_actions = _ref_new_actions
 
             if force_mu_conditioning == "none":
                 mu_conditioning = None
@@ -307,22 +319,19 @@ def train_behavior_cloning(
         val_loss = 0
         total_vinfo = {}
         with torch.no_grad():
-            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs in val_loader:
+            for context, current, base_actions, expert_actions, padding_mask, data_sources, sys_noises, obs_noises, _ref_trajs_formatted in val_loader:
                 context, current, base_actions, expert_actions = context.to(device), current.to(device), base_actions.to(device), expert_actions.to(device)
                 padding_mask = padding_mask.to(device)
                 sys_noises = sys_noises.to(device)
                 obs_noises = obs_noises.to(device)
 
                 if train_mode == "perfect-coverage":
-                    assert _ref_trajs[0] is not None
-                    _ref_label_means = torch.tensor(ref_label_means, dtype=torch.float32, device=device)
-                    _ref_label_stds = torch.tensor(ref_label_stds, dtype=torch.float32, device=device)
-                    _ref_obss = torch.stack([torch.tensor(rt[0], dtype=torch.float32, device=device) for rt in _ref_trajs])
-                    _ref_recposes = torch.stack([torch.tensor(rt[1], dtype=torch.float32, device=device) for rt in _ref_trajs])
-                    _ref_insposes = torch.stack([torch.tensor(rt[2], dtype=torch.float32, device=device) for rt in _ref_trajs])
-                    _ref_noised_obss = cur_utils.apply_obs_noise2(_ref_obss, _ref_recposes, _ref_insposes, obs_noises.cpu().numpy())
-                    _ref_new_actions = (expert_model(_ref_noised_obss) - _ref_label_means) / _ref_label_stds
-                    base_actions = _ref_new_actions.to(device)
+                    _ref_trajs_formatted = [_ref_item.to(device) for _ref_item in _ref_trajs_formatted]
+                    _ref_obss, _ref_recposes, _ref_insposes = _ref_trajs_formatted
+                    _ref_noised_obss = cur_utils.apply_obs_noise2(_ref_obss, _ref_recposes, _ref_insposes, obs_noises)
+                    _ref_new_actions = expert_model(_ref_noised_obss) + sys_noises * GENERAL_NOISE_SCALES
+                    _ref_new_actions = (_ref_new_actions - ref_label_means) / ref_label_stds
+                    base_actions = _ref_new_actions
 
                 if force_mu_conditioning == "none":
                     mu_conditioning = None
@@ -500,6 +509,8 @@ def main():
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r2/cut-trajectories.pkl": "drawer_y4_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r05/cut-trajectories.pkl": "drawer_y4_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_obs001_r2/cut-trajectories.pkl": "drawer_o001_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y4_id_rand2_/cut-trajectories.pkl": "peg_y4_o001_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar11/peg_r4_id/cut-trajectories.pkl": "peg_r4_exp_ds",
     }
 
     datasets = []

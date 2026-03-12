@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 SUCCESS_THRESHOLD = 0.09
+GENERAL_NOISE_SCALES = np.array([2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408], dtype=np.float32) / 5
 
 def axis_angle_to_matrix(axis_angle):
     # axis_angle shape: (N, 3)
@@ -215,12 +216,14 @@ def zfill(x: torch.Tensor, horizon: int, dim: int = 1):
 def apply_obs_noise2(obs_policy: torch.Tensor, obs_recpose: torch.Tensor, obs_inspose: torch.Tensor, receptive_noise: np.ndarray, insertive_noise: np.ndarray = None):
     N = obs_policy.shape[0]
     device = obs_policy.device
+    if isinstance(receptive_noise, np.ndarray):
+        receptive_noise = torch.tensor(receptive_noise, dtype=torch.float32, device=device)
     if insertive_noise is None:
-        insertive_noise = np.zeros_like(receptive_noise)
+        insertive_noise = torch.zeros_like(receptive_noise)
+    elif isinstance(insertive_noise, np.ndarray):
+        insertive_noise = torch.tensor(insertive_noise, dtype=torch.float32, device=device)
 
     obs_tweaked = obs_policy.clone()
-    receptive_noise = torch.tensor(receptive_noise, dtype=torch.float32, device=device)
-    insertive_noise = torch.tensor(insertive_noise, dtype=torch.float32, device=device)
     receptive_state = obs_recpose.reshape(N, 5, 6) + receptive_noise.unsqueeze(1)
     insertive_state = obs_inspose.reshape(N, 5, 6) + insertive_noise.unsqueeze(1)
     obs_tweaked[:, :30] = predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)

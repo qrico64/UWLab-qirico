@@ -1116,6 +1116,8 @@ class MultiResetManager(ManagerTermBase):
                 init_indices_mask &= (all_insertive_ys % 4 == 1) & (all_receptive_ys % 4 == 1)
             elif reset_mode == "y4_ood":
                 init_indices_mask &= (all_insertive_ys % 4 != 1) | (all_receptive_ys % 4 != 1)
+            elif reset_mode == "y5_id":
+                init_indices_mask &= (all_insertive_ys % 5 == 1) & (all_receptive_ys % 5 == 1)
             elif reset_mode == "r3_id":
                 init_indices_mask &= (all_receptive_xs % 3 == 0) & (all_receptive_ys % 3 == 0)
             elif reset_mode == "r3_ood":
