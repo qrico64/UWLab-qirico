@@ -188,6 +188,7 @@ def train_behavior_cloning(
         ref_label_stds = None,
         ref_current_means = None,
         ref_current_stds = None,
+        our_task: str = "peg",
     ):
     unique_data_sources_train = {}
     for traj in train_data:
@@ -196,22 +197,22 @@ def train_behavior_cloning(
     for traj in val_data:
         unique_data_sources_val[traj['data_source']] = unique_data_sources_val.get(traj['data_source'], 0) + 1
 
-    # expert_model = expert_utils.load_peg_expert("expert_policies/peg_state_rl_expert.pt", device='cuda')[0]
-    # assert np.allclose(
-    #     train_data[0]['expert_actions'], 
-    #     (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
-    #     atol=1e-5,
-    # )
-    # assert np.allclose(
-    #     train_data[0]['current'][0][:6],
-    #     (train_data[0]['__log']['obs']['policy'][0][:6] - ref_current_means[:6]) / ref_current_stds[:6],
-    #     rtol=1e-4,
-    # )
-    # assert np.allclose(
-    #     train_data[0]['current'][0][39:45],
-    #     (train_data[0]['__log']['obs']['policy'][0][195:201] - ref_current_means[39:45]) / ref_current_stds[39:45],
-    #     rtol=1e-4,
-    # )
+    expert_model = expert_utils.load_expert_by_task(our_task, device='cuda')[0]
+    assert np.allclose(
+        train_data[0]['expert_actions'], 
+        (expert_model(torch.tensor(train_data[0]['__log']['obs']['policy'], device=device)).cpu().detach().numpy() - ref_label_means) / ref_label_stds,
+        atol=1e-5,
+    )
+    assert np.allclose(
+        train_data[0]['current'][0][:6],
+        (train_data[0]['__log']['obs']['policy'][0][:6] - ref_current_means[:6]) / ref_current_stds[:6],
+        rtol=1e-4,
+    )
+    assert np.allclose(
+        train_data[0]['current'][0][39:45],
+        (train_data[0]['__log']['obs']['policy'][0][195:201] - ref_current_means[39:45]) / ref_current_stds[39:45],
+        rtol=1e-4,
+    )
 
     train_loader = DataLoader(
         IndependentTrajectoryDataset(
@@ -409,6 +410,7 @@ def main():
     parser.add_argument("--infer_mode", type=str, default="residual", help="Options: residual, expert, res_scale_shift.")
     parser.add_argument("--state_type", type=str, default="standard", help="Options: standard, noprevaction, eeposition, perfectmu, state_baseaction, baseaction_only.")
     parser.add_argument("--current_dim", type=int, default=45, help="Dimension of current / state, depends on state_type.")
+    parser.add_argument("--our_task", type=str, default="peg", help="Options: peg, drawer, leg.")
 
     # Mu stuff
     parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
@@ -497,6 +499,7 @@ def main():
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/peg_recxgeq05_id_obs003_sys4_r2/cut-trajectories.pkl": "obsnoise_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r2/cut-trajectories.pkl": "drawer_y4_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r05/cut-trajectories.pkl": "drawer_y4_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_obs001_r2/cut-trajectories.pkl": "drawer_o001_ds",
     }
 
     datasets = []
@@ -717,6 +720,7 @@ def main():
             ref_label_stds=label_stds,
             ref_current_means=current_means,
             ref_current_stds=current_stds,
+            our_task=args.our_task,
         )
     finally:
         if ENABLE_WANDB:

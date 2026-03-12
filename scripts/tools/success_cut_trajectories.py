@@ -6,7 +6,7 @@ import os
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/sys3r2_dataset_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/trajectories.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_obs001_r2/trajectories.pkl"
     SAVEFILE = os.path.join(os.path.dirname(FILENAME), "cut-" + os.path.basename(FILENAME))
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
@@ -20,9 +20,9 @@ def main():
             continue
         
         rewards = traj['rewards']
-        if np.any(rewards > 0.11):
+        if np.any(rewards > 0.09):
             success_count += 1
-            cutoff = np.argmax(rewards > 0.11) + 1
+            cutoff = np.argmax(rewards > 0.09) + 1
         else:
             cutoff = rewards.shape[0]
         traj['rewards'] = traj['rewards'][:cutoff]

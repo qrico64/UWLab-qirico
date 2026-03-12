@@ -1,13 +1,13 @@
 #!/bin/bash -l
-#SBATCH --job-name=e_drawer        # Job name
-#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar11/expert_drawer_y4_id_r05_successonly/log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar11/expert_drawer_y4_id_r05_successonly/log/%j_%x_err.txt         # Error file
+#SBATCH --job-name=r_dro1k3        # Job name
+#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar11/residual_drawer_o001r2_lr1e_4_perfect_cov_kl_mu_1e_3/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar11/residual_drawer_o001r2_lr1e_4_perfect_cov_kl_mu_1e_3/log/%j_%x_err.txt         # Error file
 #SBATCH --time=20:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
-#SBATCH --cpus-per-task=20          # CPUs per task
+#SBATCH --cpus-per-task=2          # CPUs per task
 #SBATCH --gres=gpu:1               # GPUs per node (if needed)
-#SBATCH --mem=200G                  # Memory per node
+#SBATCH --mem=38G                  # Memory per node
 #SBATCH --partition=gpu-l40s        # Partition (queue) name
 #SBATCH --account=stf         # Slurm account/project name
 
