@@ -174,7 +174,7 @@ def collate_fn(batch):
     sys_noises = torch.stack(sys_noises)
     obs_noises = torch.stack(obs_noises)
 
-    _ref_trajs_formatted = None if _ref_trajs is None else [
+    _ref_trajs_formatted = None if _ref_trajs[0] is None else [
         torch.stack([torch.tensor(rt[0], dtype=torch.float32) for rt in _ref_trajs]),
         torch.stack([torch.tensor(rt[1], dtype=torch.float32) for rt in _ref_trajs]),
         torch.stack([torch.tensor(rt[2], dtype=torch.float32) for rt in _ref_trajs]),
