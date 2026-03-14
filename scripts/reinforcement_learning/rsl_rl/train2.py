@@ -190,7 +190,7 @@ def train_behavior_cloning(
         lr=1e-4,
         batch_size=64,
         device="cuda",
-        save_path=None,
+        save_path: str = None,
         train_mode: str = "single-traj",
         closest_neighbors_radius: float = 0.001,
         warm_start: int = 0,
@@ -252,7 +252,6 @@ def train_behavior_cloning(
     SAVE_INTERVAL = epochs // 5
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
-    criterion = nn.MSELoss()
     # Learning rate scheduler for better convergence
     if warm_start <= 0:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -265,11 +264,20 @@ def train_behavior_cloning(
             ],
             milestones=[warm_start],
         )
-
-    fixed_epochs = []
+    
+    epoch = 0
     best_loss = 100000
     best_loss_epoch = -1
-    for epoch in range(epochs):
+    if os.path.exists(os.path.join(save_path, f"latest.pt")):
+        resume_dict = torch.load(os.path.join(save_path, f"latest.pt"), map_location=device)
+        model.load_state_dict(resume_dict["model_state_dict"])
+        optimizer.load_state_dict(resume_dict["optimizer_state_dict"])
+        scheduler.load_state_dict(resume_dict["scheduler_state_dict"])
+        epoch = resume_dict["epoch"]
+        best_loss = resume_dict["best_loss"]
+        best_loss_epoch = resume_dict["best_loss_epoch"]
+
+    while epoch < epochs:
         model.train()
         train_loss = 0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
@@ -377,19 +385,29 @@ def train_behavior_cloning(
             csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
             torch.save(model.state_dict(), csp)
             print(f"Model at epoch {epoch} saved to {csp}")
-            fixed_epochs.append(epoch)
-        
-        if epoch > SAVE_INTERVAL - 10 and avg_val_loss < best_loss and save_path is not None and epoch not in fixed_epochs:
+        elif epoch > SAVE_INTERVAL - 10 and avg_val_loss < best_loss and save_path is not None:
             best_loss = avg_val_loss
-            if best_loss_epoch not in fixed_epochs:
-                csp = os.path.join(save_path, f"{best_loss_epoch}-ckpt.pt")
-                if os.path.exists(csp):
-                    os.unlink(csp)
-                    print(f"Model at epoch {best_loss_epoch} removed.")
+            csp = os.path.join(save_path, f"{best_loss_epoch}-ckpt.pt")
+            if best_loss_epoch >= 0 and os.path.exists(csp):
+                os.unlink(csp)
+                print(f"Model at epoch {best_loss_epoch} removed.")
             best_loss_epoch = epoch
             csp = os.path.join(save_path, f"{epoch}-ckpt.pt")
             torch.save(model.state_dict(), csp)
             print(f"Best model at epoch {epoch} saved to {csp}")
+        
+        latest_dict = {
+            "epoch": epoch + 1,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "wandb_run_id": wandb.run.id if ENABLE_WANDB and wandb.run is not None else None,
+            "best_loss": best_loss,
+            "best_loss_epoch": best_loss_epoch,
+        }
+        torch.save(latest_dict, os.path.join(save_path, f"latest.pt"))
+
+        epoch += 1
 
     
     if save_path is not None:
@@ -457,6 +475,13 @@ def main():
     
     args = parser.parse_args()
 
+    SEED = 42
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+
     # Accessing the parameters
     LR = args.lr
     EPOCHS = args.epochs
@@ -467,6 +492,7 @@ def main():
     DROPOUT = args.dropout
 
     save_path = args.save_path
+    os.makedirs(save_path, exist_ok=True)
     
     CONTEXT_DIM = 45 + 7
     CURRENT_DIM = args.current_dim
@@ -490,9 +516,18 @@ def main():
         assert args.train_mode in ["expert"]
 
     if ENABLE_WANDB:
+        wandb_id_path = os.path.join(save_path, "wandb_run_id.txt")
+        if os.path.exists(wandb_id_path):
+            with open(wandb_id_path, "r") as f:
+                wandb_run_id = f.read().strip()
+        else:
+            wandb_run_id = wandb.util.generate_id()
+            with open(wandb_id_path, "w") as f:
+                f.write(wandb_run_id)
+        
         WANDB_PROJECT = "robot-transformer-bc-deterministic-normalized-labels" if not TRAIN_EXPERT else "robot-mlp-bc"
         WANDB_NAME = os.path.basename(save_path)
-        wandb.init(project=WANDB_PROJECT, config=vars(args), name=WANDB_NAME)
+        wandb.init(project=WANDB_PROJECT, config=vars(args), name=WANDB_NAME, id=wandb_run_id, resume="allow")
     
     DATASET_PATHS = args.dataset_path
 
@@ -645,7 +680,6 @@ def main():
         'obs_insertive_noise_scale': load_dict['obs_insertive_noise_scale'],
         'obs_receptive_noise_scale': load_dict['obs_receptive_noise_scale'],
     }
-    os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
         pickle.dump(save_dict, fi)
 
@@ -710,8 +744,6 @@ def main():
         state_type=args.state_type,
     )
     model.to(device)
-    if ENABLE_WANDB:
-        wandb.watch(model)
 
     try:
         train_behavior_cloning(

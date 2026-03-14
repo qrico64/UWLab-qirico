@@ -1,8 +1,8 @@
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar11/residual_drawer_o001r2_lr1e_4_perfect_cov_kl_mu_1e_3
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar13/residual_o003s4r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16
 
 export OBSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
 export SYSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb26/fourthtry_receptive_0_sys3_rand2_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/cut-trajectories.pkl
-export OBSNOISE_DS_NEW=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_obs001_r2/cut-trajectories.pkl
+export OBSNOISE_DS_NEW=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/peg_recxgeq05_id_obs003_sys4_r2/cut-trajectories.pkl
 
 mkdir -p $SAVE_PATH
 cp d3.sh $SAVE_PATH/
@@ -12,7 +12,7 @@ cp scripts/reinforcement_learning/rsl_rl/play_eval1.py $SAVE_PATH/
 
 export IS_EXPERT=0
 export EPOCHS=1000
-export OUR_TASK=drawer
+export OUR_TASK=peg
 python scripts/reinforcement_learning/rsl_rl/train2.py \
     --lr 0.0001 \
     --epochs $EPOCHS \
@@ -37,7 +37,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --dropout_head 0.3 \
     \
     --mu_head_arch 2layer \
-    --mu_size 512 \
+    --mu_size 16 \
     --mu_kl_factor 0.001 \
     \
     --current_head_arch none \
@@ -47,6 +47,8 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --combined_head_arch none \
     --combined_emb_size 1024 \
     --combined_kl_factor 0 \
+    \
+    --receptive_xlow 0.5 \
 
 
 # export IS_EXPERT=1
