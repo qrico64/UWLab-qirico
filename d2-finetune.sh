@@ -24,18 +24,16 @@ apptainer exec --nv \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
 
-export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
-export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/residual_feb22_standardhead_mu_linear_d64_kl01/1000-ckpt.pt
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb24/finetune-lora-utd1--residual_feb22_standardhead_mu_linear_d64_kl01
+export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt
+export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb17/fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000/1000-ckpt.pt
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar13/finetune/should_be_around_60
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
-  --checkpoint peg_state_rl_expert.pt \
-  env.scene.insertive_object=peg \
-  env.scene.receptive_object=peghole \
+  --our_task peg \
   --headless \
   --num_envs 10 \
-  --num_evals 5000 \
+  --num_evals 1000 \
   --finetune_mode residual \
   --base_policy $BASE_POLICY \
   --correction_model $CORRECTION_MODEL \

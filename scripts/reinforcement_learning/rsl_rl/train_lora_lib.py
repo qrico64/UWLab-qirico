@@ -231,6 +231,12 @@ def convert_lora_model_to_plain_robot_policy(
         current_head_arch=save_dict["current_head_arch"],
         current_emb_size=save_dict["current_emb_size"],
         current_kl_factor=save_dict["current_kl_factor"],
+        combined_head_arch=save_dict["combined_head_arch"],
+        combined_emb_size=save_dict["combined_emb_size"],
+        combined_kl_factor=save_dict["combined_kl_factor"],
+        state_type=save_dict["state_type"],
+        force_mu_conditioning=save_dict["force_mu_conditioning"],
+        force_mu_conditioning_size=save_dict["force_mu_conditioning_size"],
     )
 
     if device is not None:

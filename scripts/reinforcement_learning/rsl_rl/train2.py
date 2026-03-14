@@ -438,6 +438,7 @@ def main():
     parser.add_argument("--state_type", type=str, default="standard", help="Options: standard, noprevaction, eeposition, perfectmu, state_baseaction, baseaction_only.")
     parser.add_argument("--current_dim", type=int, default=45, help="Dimension of current / state, depends on state_type.")
     parser.add_argument("--our_task", type=str, default="peg", help="Options: peg, drawer, leg.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
 
     # Mu stuff
     parser.add_argument("--mu_head_arch", type=str, default="none", help="Options: none, identity, linear, 2layer.")
@@ -475,7 +476,7 @@ def main():
     
     args = parser.parse_args()
 
-    SEED = 42
+    SEED = args.seed
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)

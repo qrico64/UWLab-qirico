@@ -30,6 +30,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --state_type standard \
     --current_dim 45 \
     --our_task $OUR_TASK \
+    --seed 42 \
     \
     --head_arch_version mlpblock_v1 \
     --num_head_layers 5 \
