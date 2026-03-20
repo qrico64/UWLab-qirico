@@ -1,3 +1,33 @@
+#!/bin/bash -l
+#SBATCH --job-name=finetune        # Job name
+#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar17/residual_o10r2_lr1e_4_stateonly/finetune-xleq035-f22/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar17/residual_o10r2_lr1e_4_stateonly/finetune-xleq035-f22/log/%j_%x_err.txt         # Error file
+#SBATCH --time=24:00:00            # Time limit (hh:mm:ss)
+#SBATCH --nodes=1                  # Number of nodes
+#SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
+#SBATCH --cpus-per-task=6          # CPUs per task
+#SBATCH --gres=gpu:l40:1               # GPUs per node (if needed)
+#SBATCH --mem=60G                  # Memory per node
+#SBATCH --partition=ckpt-all        # Partition (queue) name
+#SBATCH --account=weirdlab         # Slurm account/project name
+
+# Load environment
+cd /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico
+
+# Checks
+echo
+echo "Node: $(hostname)"
+which python
+python -V
+python -c "import sys, pprint; pprint.pprint(sys.path[:5])"
+echo
+echo
+
+
+# Run your program
+source a.sh
+
+
 export UW_BASE=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/docker
 
 export APPTAINERENV_ISAACSIM_PATH=/isaac-sim/
@@ -5,6 +35,10 @@ export APPTAINERENV_OMNI_USER_DATA_PATH=/tmp/qirico/ov/data
 export APPTAINERENV_OMNI_CACHE_PATH=/tmp/qirico/ov/cache
 export APPTAINERENV_TERM=xterm-256color
 mkdir -p $APPTAINERENV_OMNI_USER_DATA_PATH $APPTAINERENV_OMNI_CACHE_PATH
+
+export JOBTMP=/tmp/${USER}_tmp_${SLURM_JOB_ID:-manual}_$$
+mkdir -p "$JOBTMP"
+chmod 700 "$JOBTMP"
 
 apptainer exec --nv \
   --bind /mmfs1/gscratch/stf/:/mmfs1/gscratch/stf/ \
@@ -20,20 +54,25 @@ apptainer exec --nv \
   --bind $UW_BASE/logs:/workspace/uwlab/logs \
   --bind $UW_BASE/outputs:/workspace/uwlab/outputs \
   --bind $UW_BASE/data_storage:/workspace/uwlab/data_storage \
+  --bind "$JOBTMP:/tmp" \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
 
-export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt
-export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb17/fourthtry_rand2_xgeq05_neighbor0001_bigdata_epoch1000/1000-ckpt.pt
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar13/finetune/should_be_around_60
+export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
+export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar17/residual_o10r2_lr1e_4_stateonly
+export EPOCHS=1000
+export OUR_TASK=peg
+
+export CORRECTION_MODEL=$CORRECTION_MODEL_DIR/1000-ckpt.pt
+export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune-xleq035-f22
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
-  --our_task peg \
+  --our_task $OUR_TASK \
   --headless \
   --num_envs 10 \
-  --num_evals 1000 \
+  --num_evals $EPOCHS \
   --finetune_mode residual \
   --base_policy $BASE_POLICY \
   --correction_model $CORRECTION_MODEL \
@@ -42,4 +81,14 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --finetune_arch lora \
   --lr 3e-4 \
   --reset_mode xleq035
+
+HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
+  --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
+  --our_task $OUR_TASK \
+  --headless \
+  --num_envs 100 \
+  --num_evals 2000 \
+  --correction_model $SAVE_PATH \
+  --reset_mode xleq035 \
+  --eval_mode default
 '

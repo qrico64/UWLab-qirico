@@ -336,7 +336,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # Rico: Instantiate base policy!!
     assert args_cli.base_policy is not None
     base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device)
-    assert base_policy_info['infer_mode'] == "expert"
+    assert base_policy_info['infer_mode'] == "expert" or base_policy_info['infer_mode'] == "expert_new"
     base_policy = base_policy.model
     if args_cli.finetune_arch == "lora":
         report = train_lora_lib.verify_lora_conversion_from_model(base_policy)
@@ -442,6 +442,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         save_model_at_checkpoint(base_policy, str(SAVE_DIRECTORY), 0, finetuning_arch=args_cli.finetune_arch)
         with open(SAVE_DIRECTORY / f"info.pkl", "wb") as fi:
             pickle.dump(base_policy_info, fi)
+        with open(SAVE_DIRECTORY / f"info.txt", "w") as fi:
+            for k, v in base_policy_info.items():
+                fi.write(f"{k}: {v}\n")
 
     num_epochs_so_far = 0
     num_trajs_so_far = 0
@@ -462,7 +465,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # Initialize wandb
     if ENABLE_WANDB:
         WANDB_PROJECT = "robot-transformer-bc-finetuning-eval"
-        wandb.init(project=WANDB_PROJECT, config=vars(args_cli))
+        WANDB_NAME = os.path.basename(os.path.dirname(SAVE_DIRECTORY))
+        wandb.init(project=WANDB_PROJECT, config=vars(args_cli), name=WANDB_NAME)
         wandb.watch(base_policy)
 
     try:
