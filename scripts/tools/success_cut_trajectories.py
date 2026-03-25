@@ -6,16 +6,17 @@ import os
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_obs001_r2/trajectories.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar19/peg_recxgeq05_o001r2z004/trajectories.pkl"
     SAVEFILE = os.path.join(os.path.dirname(FILENAME), "cut-" + os.path.basename(FILENAME))
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
     result_trajs = []
     success_count = 0
     elimination_count = 0
+    horizon = max([traj['actions'].shape[0] for traj in trajs])
     for traj in trajs:
         max_action_magnitude = np.linalg.norm(traj['actions'], axis=-1).max()
-        if max_action_magnitude > 100 or traj['actions'].shape[0] < 15:
+        if max_action_magnitude > 100 or traj['actions'].shape[0] < horizon:
             elimination_count += 1
             continue
         
