@@ -642,12 +642,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
     correction_model_file = pathlib.Path(args_cli.correction_model)
+    base_policy_file = args_cli.base_policy
+    if base_policy_file == "" or base_policy_file == "none":
+        base_policy_file = None
     if correction_model_file.is_file():
         evaluate_model(
             env,
             policy,
             policy_nn,
-            base_policy=args_cli.base_policy,
+            base_policy=base_policy_file,
             correction_model=args_cli.correction_model,
             num_evals=args_cli.num_evals,
             reset_mode=args_cli.reset_mode,
@@ -672,7 +675,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 env,
                 policy,
                 policy_nn,
-                base_policy=args_cli.base_policy,
+                base_policy=base_policy_file,
                 correction_model=str(correction_model_path),
                 num_evals=args_cli.num_evals * 4 if correction_model_path == correction_model_files[-1] else args_cli.num_evals,
                 reset_mode=args_cli.reset_mode,
@@ -689,6 +692,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         
         print(checkpoints)
         print(success_rates)
+        (correction_model_file / "viz").mkdir(parents=True, exist_ok=True)
         with open(correction_model_file / "viz" / "success_rate_over_checkpoints.txt", 'w') as f:
             for ckpt, rate in zip(checkpoints, success_rates):
                 f.write(f"{ckpt} {rate}\n")
