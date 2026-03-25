@@ -6,10 +6,12 @@ import os
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar19/peg_recxgeq05_o001r2z004/trajectories.pkl"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar15/leg_y5_id_h160/trajectories.pkl"
     SAVEFILE = os.path.join(os.path.dirname(FILENAME), "cut-" + os.path.basename(FILENAME))
     with open(FILENAME, "rb") as fi:
         trajs = pickle.load(fi)
+    with open(os.path.join(os.path.dirname(FILENAME), "info.pkl"), "rb") as fi:
+        info = pickle.load(fi)
     result_trajs = []
     success_count = 0
     elimination_count = 0
@@ -45,6 +47,13 @@ def main():
     print(f"Elimination rate: {(len(trajs) - len(result_trajs)) / len(trajs)}")
     print(f"Success rate: {success_count / len(result_trajs)}")
 
+    info['after_cut_success_rate'] = success_count / len(result_trajs)
+    info['cut_elimination_rate'] = (len(trajs) - len(result_trajs)) / len(trajs)
+    with open(os.path.join(os.path.dirname(SAVEFILE), "info.pkl"), "wb") as fi:
+        pickle.dump(info, fi)
+    with open(os.path.join(os.path.dirname(SAVEFILE), "info.txt"), "w") as fi:
+        for k, v in info.items():
+            fi.write(f"{k}: {v}\n")
     with open(SAVEFILE, "wb") as fi:
         pickle.dump(result_trajs, fi)
     print(SAVEFILE)

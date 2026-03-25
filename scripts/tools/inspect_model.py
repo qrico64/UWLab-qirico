@@ -6,13 +6,16 @@ import pathlib
 
 
 def main():
-    FILENAME = "/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar2/experiment_s3r2_pred_ares_from_stateonly_npa_and_matchedmu_lossx1/300-ckpt.pt"
+    FILENAME = "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar15/drawer_y5_id_h110/info.pkl"
     FILENAME = pathlib.Path(FILENAME)
     FILENAME = FILENAME.parent / "info.pkl"
     with open(FILENAME, "rb") as fi:
         info = pickle.load(fi)
     for k, v in info.items():
         print(f"{k}: {v}")
+    with open(FILENAME.parent / "info.txt", "w") as fi:
+        for k, v in info.items():
+            fi.write(f"{k}: {v}\n")
     with open(FILENAME, "wb") as fi:
         pickle.dump(info, fi)
 
