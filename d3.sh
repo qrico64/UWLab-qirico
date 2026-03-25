@@ -1,6 +1,6 @@
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar13/residual_o003s4r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar24/residual_o005s5r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16_seed3
 
-export OBSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb17/fourthtry_receptive_0.01_with_randnoise_2.0_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
+export OBSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl
 export SYSNOISE_DS=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/feb26/fourthtry_receptive_0_sys3_rand2_recxgeq05/job-True-3.0-2.0-100000-60--0.0-0.0/cut-trajectories.pkl
 export OBSNOISE_DS_NEW=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/peg_recxgeq05_id_obs003_sys4_r2/cut-trajectories.pkl
 
@@ -63,7 +63,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
 #     --dropout 0.3 \
 #     --batch_size 512 \
 #     --save_path $SAVE_PATH \
-#     --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_r05/cut-trajectories.pkl \
+#     --dataset_path /mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar15/drawer_y5_id_h110/cut-trajectories.pkl \
 #     --train_mode expert \
 #     --closest_neighbors_radius 0.001 \
 #     --warm_start 10 \
@@ -113,7 +113,7 @@ apptainer exec --nv \
   --bind "$JOBTMP:/tmp" \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
-  bash -lc 'set -e
+  bash -lc '
 
 if [ "$OUR_TASK" = "peg" ]; then
   export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
@@ -121,6 +121,7 @@ elif [ "$OUR_TASK" = "drawer" ]; then
   export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar10/expert_drawer_y4_id/500-ckpt.pt
 fi
 export CORRECTION_MODEL=${SAVE_PATH}/${EPOCHS}-ckpt.pt
+export SAVE_PATH_NEW=${SAVE_PATH}/finetune
 
 if [ "$IS_EXPERT" = "0" ]; then
   HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
@@ -143,6 +144,31 @@ if [ "$IS_EXPERT" = "0" ]; then
     --correction_model $CORRECTION_MODEL \
     --reset_mode xleq035 \
     --eval_mode obsnoise001
+  
+  HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
+    --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
+    --our_task $OUR_TASK \
+    --headless \
+    --num_envs 10 \
+    --num_evals 1000 \
+    --finetune_mode residual \
+    --base_policy $BASE_POLICY \
+    --correction_model $CORRECTION_MODEL \
+    --save_path $SAVE_PATH_NEW \
+    --utd_ratio 1.0 \
+    --finetune_arch lora \
+    --lr 3e-4 \
+    --reset_mode xleq035
+
+  HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
+    --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
+    --our_task $OUR_TASK \
+    --headless \
+    --num_envs 100 \
+    --num_evals 2000 \
+    --correction_model $SAVE_PATH_NEW \
+    --reset_mode xleq035 \
+    --eval_mode default
 
   HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
     --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \

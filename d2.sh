@@ -1,3 +1,33 @@
+#!/bin/bash -l
+#SBATCH --job-name=eval        # Job name
+#SBATCH --output=/dev/null        # Output file (%j = job ID)
+#SBATCH --error=/dev/null         # Error file
+#SBATCH --time=24:00:00            # Time limit (hh:mm:ss)
+#SBATCH --nodes=1                  # Number of nodes
+#SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
+#SBATCH --cpus-per-task=6          # CPUs per task
+#SBATCH --gres=gpu:a40:1               # GPUs per node (if needed)
+#SBATCH --mem=60G                  # Memory per node
+#SBATCH --partition=ckpt-all        # Partition (queue) name
+#SBATCH --account=weirdlab         # Slurm account/project name
+
+# Load environment
+cd /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico
+
+# Checks
+echo
+echo "Node: $(hostname)"
+which python
+python -V
+python -c "import sys, pprint; pprint.pprint(sys.path[:5])"
+echo
+echo
+
+
+# Run your program
+source a.sh
+
+
 export UW_BASE=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/docker
 
 export APPTAINERENV_ISAACSIM_PATH=/isaac-sim/
@@ -30,16 +60,15 @@ apptainer exec --nv \
   bash -lc 'set -e
 
 export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
-export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar10/residual_o003s4r2_lr1e_4_perfect_cov_stateonly/1000-ckpt.pt
+export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/finetune-xleq035-expert-full_lr5e_6
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
   --our_task peg \
   --headless \
   --num_envs 100 \
-  --num_evals 20000 \
-  --base_policy $BASE_POLICY \
+  --num_evals 3000 \
   --correction_model $CORRECTION_MODEL \
   --reset_mode xleq035 \
-  --eval_mode default \
+  --eval_mode default
 '
