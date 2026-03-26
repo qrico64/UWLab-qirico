@@ -2,7 +2,7 @@
 #SBATCH --time=24:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
-#SBATCH --cpus-per-task=2          # CPUs per task
+#SBATCH --cpus-per-task=8          # CPUs per task
 #SBATCH --gres=gpu:l40:1               # GPUs per node (if needed)
 #SBATCH --mem=80G                  # Memory per node
 #SBATCH --partition=ckpt-all        # Partition (queue) name

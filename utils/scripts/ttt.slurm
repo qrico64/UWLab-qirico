@@ -90,7 +90,7 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 100 \
   --num_evals 2000 \
-  --correction_model $SAVE_PATH_NEW \
+  --base_policy $SAVE_PATH_NEW \
   --reset_mode xleq035 \
   --eval_mode default
 '

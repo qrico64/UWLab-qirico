@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar25/test_residual
-export RUN_NAME=r_test2
+export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar26/residual_o003s4r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16_seed1
+export RUN_NAME=r1_o3s4
 export IS_EXPERT=0
-export EPOCHS=20
+export EPOCHS=1000
 export OUR_TASK=peg
 
 mkdir -p "$SAVE_PATH"
