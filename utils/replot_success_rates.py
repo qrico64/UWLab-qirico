@@ -45,9 +45,9 @@ def find_checkpoint_success_rates(root: Path, subdir: str) -> list[tuple[int, fl
     """
     results = []
 
-    for ckpt_path in root.glob("*-ckpt.pt"):
+    for ckpt_path in root.glob("*-ckpt-eval_viz"):
         stem = ckpt_path.name
-        prefix = stem[:-len("-ckpt.pt")]
+        prefix = stem[:-len("-ckpt-eval_viz")]
 
         try:
             ckpt_num = int(prefix)
