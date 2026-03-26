@@ -434,11 +434,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         SAVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
         # Save the base model as ckpt_0.pt
         save_model_at_checkpoint(base_policy, str(SAVE_DIRECTORY), 0, finetuning_arch=args_cli.finetune_arch)
-        with open(SAVE_DIRECTORY / f"info.pkl", "wb") as fi:
-            pickle.dump(base_policy_info, fi)
-        with open(SAVE_DIRECTORY / f"info.txt", "w") as fi:
-            for k, v in base_policy_info.items():
-                fi.write(f"{k}: {v}\n")
+        cur_utils.save_info_dict(base_policy_info, SAVE_DIRECTORY / f"info.pkl")
 
     num_epochs_so_far = 0
     num_trajs_so_far = 0
@@ -590,8 +586,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                     if SAVE_DIRECTORY is not None and SAVE_INTERVAL(current_traj) > SAVE_INTERVAL(num_trajs_so_far):
                         save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_traj, finetuning_arch=args_cli.finetune_arch)
-                        with open(SAVE_DIRECTORY / f"info.pkl", "wb") as fi:
-                            pickle.dump(base_policy_info, fi)
+                        cur_utils.save_info_dict(base_policy_info, SAVE_DIRECTORY / f"info.pkl")
                     
                     num_epochs_so_far += num_epochs
                 

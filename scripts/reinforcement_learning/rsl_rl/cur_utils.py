@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import pathlib
+import pickle
 
 SUCCESS_THRESHOLD = 0.09
 GENERAL_NOISE_SCALES = np.array([2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408], dtype=np.float32) / 5
@@ -235,4 +237,14 @@ def apply_obs_noise(obs: torch.Tensor, receptive_noise: np.ndarray, insertive_no
     obs_tweaked = obs.clone()
     obs_tweaked['policy'] = apply_obs_noise2(obs['policy'], obs['policy_aaaaaa']['receptive_asset_pose'], obs['policy_aaaaaa']['insertive_asset_pose'], receptive_noise, insertive_noise)
     return obs_tweaked
+
+def save_info_dict(info: dict, filename: str | pathlib.Path):
+    filepath = pathlib.Path(filename)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "wb") as fi:
+        pickle.dump(info, fi)
+    with open(filepath.with_suffix(".txt"), "w") as fi:    
+        for k, v in info.items():
+            fi.write(f"{k}: {v}\n")
+    print(f"Saved info to {filepath}")
 

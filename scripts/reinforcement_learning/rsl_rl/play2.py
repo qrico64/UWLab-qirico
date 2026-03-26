@@ -218,8 +218,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         'obs_insertive_noise_scale': args_cli.obs_insertive_noise_scale,
         'horizon': args_cli.horizon,
     }
-    with open(infofile, "wb") as fi:
-        pickle.dump(info_stored, fi)
+    cur_utils.save_info_dict(info_stored, infofile)
     #### END INFORMATION DICT ####
 
     dt = env.unwrapped.step_dt

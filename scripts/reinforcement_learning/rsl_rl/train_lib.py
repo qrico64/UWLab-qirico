@@ -12,6 +12,7 @@ from tqdm import tqdm
 import argparse
 import matplotlib.pyplot as plt
 import cur_utils
+import pathlib
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -459,9 +460,11 @@ class RobotTransformerPolicy(nn.Module):
 
 
 class ProcessedRobotTransformerPolicy(nn.Module):
-    def __init__(self, save_path: str, device: str = "cpu"):
+    def __init__(self, save_path: str | pathlib.Path, device: str = "cpu"):
         super().__init__()
         self.device = torch.device(device)
+
+        save_path = str(save_path)
 
         # load info
         info_path = os.path.join(os.path.dirname(save_path), "info.pkl")
@@ -598,7 +601,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         return out
 
 
-def load_robot_policy(save_path, device="cpu"):
+def load_robot_policy(save_path: str | pathlib.Path, device="cpu"):
     model = ProcessedRobotTransformerPolicy(save_path, device=device)
     model.eval()
     return model, model.save_dict

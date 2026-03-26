@@ -723,8 +723,7 @@ def main():
         'obs_insertive_noise_scale': load_dict['obs_insertive_noise_scale'],
         'obs_receptive_noise_scale': load_dict['obs_receptive_noise_scale'],
     }
-    with open(os.path.join(save_path, "info.pkl"), "wb") as fi:
-        pickle.dump(save_dict, fi)
+    cur_utils.save_info_dict(save_dict, os.path.join(save_path, "info.pkl"))
 
     # Visualization
     viz_path = os.path.join(save_path, "viz")
