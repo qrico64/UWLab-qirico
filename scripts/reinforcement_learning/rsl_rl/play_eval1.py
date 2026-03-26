@@ -220,8 +220,8 @@ def evaluate_model(
     env,
     policy,
     policy_nn,
-    base_policy,
-    correction_model,
+    base_policy_file,
+    correction_model_file,
     num_evals,
     reset_mode='none',
     need_reset_envs=True,
@@ -238,10 +238,10 @@ def evaluate_model(
     N = env.num_envs
 
     # Rico: Instantiate base policy!!
-    BASE_POLICY_FILE = pathlib.Path(base_policy) if base_policy is not None else None
+    BASE_POLICY_FILE = pathlib.Path(base_policy_file) if base_policy_file is not None else None
     expert_policy = policy
-    if base_policy is not None:
-        base_policy, base_policy_info = load_robot_policy(base_policy, device=device)
+    if base_policy_file is not None:
+        base_policy, base_policy_info = load_robot_policy(base_policy_file, device=device)
         assert base_policy_info['train_expert']
         def policy(temp_currents):
             with torch.no_grad():
@@ -256,7 +256,7 @@ def evaluate_model(
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
     A_DIM = env.action_space.shape[-1]
     RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
-    CORRECTION_MODEL_FILE = pathlib.Path(correction_model)
+    CORRECTION_MODEL_FILE = pathlib.Path(correction_model_file)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
     correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
@@ -650,8 +650,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             env,
             policy,
             policy_nn,
-            base_policy=base_policy_file,
-            correction_model=args_cli.correction_model,
+            base_policy_file=base_policy_file,
+            correction_model_file=args_cli.correction_model,
             num_evals=args_cli.num_evals,
             reset_mode=args_cli.reset_mode,
             enable_cameras=args_cli.enable_cameras,
@@ -675,8 +675,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 env,
                 policy,
                 policy_nn,
-                base_policy=base_policy_file,
-                correction_model=str(correction_model_path),
+                base_policy_file=base_policy_file,
+                correction_model_file=str(correction_model_path),
                 num_evals=args_cli.num_evals * 4 if correction_model_path == correction_model_files[-1] else args_cli.num_evals,
                 reset_mode=args_cli.reset_mode,
                 enable_cameras=args_cli.enable_cameras,
