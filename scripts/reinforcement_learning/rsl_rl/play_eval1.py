@@ -218,7 +218,7 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
 
 def evaluate_model(
     env,
-    policy,
+    expert_policy,
     policy_nn,
     base_policy_file,
     correction_model_file,
@@ -236,31 +236,30 @@ def evaluate_model(
 ):
     T_DIM = horizon
     N = env.num_envs
+    S_DIM = env.observation_space['policy2'].shape[-1]
+    A_DIM = env.action_space.shape[-1]
 
     # Rico: Instantiate base policy!!
     BASE_POLICY_FILE = pathlib.Path(base_policy_file) if base_policy_file is not None else None
-    expert_policy = policy
     if base_policy_file is not None:
-        base_policy, base_policy_info = load_robot_policy(base_policy_file, device=device)
+        base_policy_raw, base_policy_info = load_robot_policy(base_policy_file, device=device)
         assert base_policy_info['train_expert']
-        def policy(temp_currents):
+        def base_policy(obs_input_dict):
             with torch.no_grad():
-                return base_policy.get_action(
-                    torch.zeros(len(temp_currents), T_DIM, base_policy_info['context_dim'], device=device),
-                    torch.cat([temp_currents['policy2'], torch.zeros(len(temp_currents), 8, device=device)], dim=-1),
-                    torch.zeros(len(temp_currents), T_DIM, base_policy_info['label_dim'], device=device),
-                    padding_mask=torch.zeros(len(temp_currents), T_DIM, dtype=torch.bool, device=device),
+                return base_policy_raw.get_action(
+                    torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['context_dim'], device=device),
+                    torch.cat([obs_input_dict['policy2'], torch.zeros(len(obs_input_dict), 8, device=device)], dim=-1),
+                    torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['label_dim'], device=device),
+                    padding_mask=torch.zeros(len(obs_input_dict), T_DIM, dtype=torch.bool, device=device),
                 )
+    else:
+        base_policy = expert_policy
     
     # Correction model stuff
-    RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
-    A_DIM = env.action_space.shape[-1]
-    RESIDUAL_CONTEXT_DIM = RESIDUAL_S_DIM + A_DIM
     CORRECTION_MODEL_FILE = pathlib.Path(correction_model_file)
     print(f"Loading model at {CORRECTION_MODEL_FILE}")
     assert CORRECTION_MODEL_FILE.is_file()
     correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
-
     TRAIN_EXPERT = correction_model_info['infer_mode'] in ["expert", "expert_new"]
 
     # Eval mode stuff
@@ -300,7 +299,7 @@ def evaluate_model(
     completed_reset = torch.full((N,), not need_reset_envs, dtype=torch.bool, device=device)
     timesteps = torch.zeros(N, N_DIM, dtype=torch.int64, device=device)
     successes = torch.zeros(N, N_DIM, dtype=torch.bool, device=device)
-    rec_observations = torch.zeros(N, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=device)
+    rec_observations = torch.zeros(N, N_DIM, T_DIM, S_DIM, dtype=torch.float32, device=device)
     rec_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
     rec_rewards = torch.zeros(N, N_DIM, T_DIM, dtype=torch.float32, device=device)
     rec_expert_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
@@ -358,7 +357,7 @@ def evaluate_model(
             obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)
             obs_tweaked['policy'][:, -30:] = receptive_state.reshape(N, 30)
 
-            base_actions_raw = policy(obs_tweaked)
+            base_actions_raw = base_policy(obs_tweaked)
 
             base_actions_raw += sys_noises
             base_actions = base_actions_raw.clone()
