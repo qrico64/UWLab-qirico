@@ -60,14 +60,16 @@ apptainer exec --nv \
   bash -lc 'set -e
 
 export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
-export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/finetune-xleq035-expert-full_lr5e_6
+export CORRECTION_MODEL=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar25/test_residual_3/1000-ckpt.pt
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
   --our_task peg \
+  --horizon 60 \
   --headless \
   --num_envs 100 \
-  --num_evals 3000 \
+  --num_evals 5000 \
+  --base_policy $BASE_POLICY \
   --correction_model $CORRECTION_MODEL \
   --reset_mode xleq035 \
   --eval_mode default

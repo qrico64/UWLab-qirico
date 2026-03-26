@@ -367,12 +367,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     VIZ_DIRECTORY = pathlib.Path(CORRECTION_MODEL_FILE).parent / "viz"
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
     correction_model, correction_model_info = train_lib.load_robot_policy(CORRECTION_MODEL_FILE, device=args_cli.device)
-    
-    assert correction_model_info['context_dim'] == RESIDUAL_S_DIM + A_DIM
-    assert correction_model_info['current_dim'] == RESIDUAL_S_DIM
-    assert correction_model_info['label_dim'] == A_DIM
-
-    TRAIN_EXPERT = correction_model_info['train_expert']
 
     N_DIM = 1
     timesteps = torch.zeros(env.num_envs, N_DIM, dtype=torch.int64, device=args_cli.device)

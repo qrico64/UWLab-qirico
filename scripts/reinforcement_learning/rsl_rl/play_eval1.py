@@ -35,7 +35,7 @@ parser.add_argument(
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--horizon", type=int, default=60, help="Horizon, max steps, duration, whatever you call it.")
-parser.add_argument("--correction_model", type=str, default="N/A", help="Residual model .pt file.")
+parser.add_argument("--correction_model", type=str, default=None, help="Residual model .pt file.")
 parser.add_argument("--plot_residual", action="store_true", default=False, help="Open second screen & plot residual.")
 parser.add_argument("--video_path", type=str, default=None, help="Save location for videos.")
 parser.add_argument("--num_evals", type=int, default=2000, help="Number of trajectories we eval for.")
@@ -234,6 +234,10 @@ def evaluate_model(
     no_viz: bool = False,
     eval_mode: str = 'default',
 ):
+    # Correction model, base policy -> Correction model on base policy;
+    # Correction model only -> Correction model on noised PPO expert;
+    # Base policy only -> Base policy;
+    # None -> noised PPO expert;
     T_DIM = horizon
     N = env.num_envs
     S_DIM = env.observation_space['policy2'].shape[-1]
@@ -256,43 +260,48 @@ def evaluate_model(
         base_policy = expert_policy
     
     # Correction model stuff
-    CORRECTION_MODEL_FILE = pathlib.Path(correction_model_file)
-    print(f"Loading model at {CORRECTION_MODEL_FILE}")
-    assert CORRECTION_MODEL_FILE.is_file()
-    correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
-    TRAIN_EXPERT = correction_model_info['infer_mode'] in ["expert", "expert_new"]
+    CORRECTION_MODEL_FILE = pathlib.Path(correction_model_file) if correction_model_file is not None else None
+    if CORRECTION_MODEL_FILE is not None:
+        print(f"Loading model at {CORRECTION_MODEL_FILE}")
+        assert CORRECTION_MODEL_FILE.is_file()
+        correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
+        assert correction_model_info['infer_mode'] not in ["expert", "expert_new"]
+        BASE_POLICY_ONLY = False
+    else:
+        correction_model = None
+        correction_model_info = {}
+        BASE_POLICY_ONLY = True
 
     # Eval mode stuff
+    SYS_NOISE_SCALE = 0.0
+    OBS_RECEPTIVE_NOISE_SCALE = 0.0
+    OBS_INSERTIVE_NOISE_SCALE = 0.0
     if BASE_POLICY_FILE is not None:
-        correction_model_info = correction_model_info | {
-            'sys_noise_scale': 0.0,
-            'obs_receptive_noise_scale': 0.0,
-            'obs_insertive_noise_scale': 0.0,
-        }
-        eval_mode = 'zero'
-    elif eval_mode == 'sysnoise3':
-        correction_model_info = correction_model_info | {
-            'sys_noise_scale': 3.0,
-            'obs_receptive_noise_scale': 0.0,
-            'obs_insertive_noise_scale': 0.0,
-        }
-    elif eval_mode == 'obsnoise001':
-        correction_model_info = correction_model_info | {
-            'sys_noise_scale': 0.0,
-            'obs_receptive_noise_scale': 0.01,
-            'obs_insertive_noise_scale': 0.0,
-        }
-    elif eval_mode == 'default':
         pass
+    elif eval_mode == 'sysnoise3':
+        SYS_NOISE_SCALE = 3.0
+    elif eval_mode == 'obsnoise001':
+        OBS_RECEPTIVE_NOISE_SCALE = 0.01
+    elif eval_mode == 'default':
+        SYS_NOISE_SCALE = correction_model_info['sys_noise_scale']
+        OBS_RECEPTIVE_NOISE_SCALE = correction_model_info['obs_receptive_noise_scale']
+        OBS_INSERTIVE_NOISE_SCALE = correction_model_info['obs_insertive_noise_scale']
     else:
         raise NotImplementedError(f"Eval mode {eval_mode} not implemented.")
 
     # Viz directory
-    temp_viz_directory_end = reset_mode + ("-" + BASE_POLICY_FILE.parent.name if BASE_POLICY_FILE is not None else "")
-    temp_viz_directory_end += ("-" + eval_mode) if eval_mode != 'default' else ""
-    VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
     if no_viz:
-        VIZ_DIRECTORY = pathlib.Path("/tmp") / CORRECTION_MODEL_FILE.parent.name / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
+        VIZ_DIRECTORY = pathlib.Path("/tmp/qirico/eval_viz")
+    elif CORRECTION_MODEL_FILE is not None:
+        temp_viz_directory_end = reset_mode + ("-" + BASE_POLICY_FILE.parent.name if BASE_POLICY_FILE is not None else "")
+        temp_viz_directory_end += ("-" + eval_mode) if eval_mode != 'default' else ""
+        VIZ_DIRECTORY = CORRECTION_MODEL_FILE.parent / CORRECTION_MODEL_FILE.name.replace(".pt", "-eval_viz") / temp_viz_directory_end
+    elif BASE_POLICY_FILE is not None:
+        VIZ_DIRECTORY = BASE_POLICY_FILE.parent / BASE_POLICY_FILE.name.replace(".pt", "-eval_viz") / reset_mode
+    else:
+        VIZ_DIRECTORY = "viz/expert_peg/"
+        assert VIZ_DIRECTORY != ""
+        VIZ_DIRECTORY = pathlib.Path(VIZ_DIRECTORY)
     VIZ_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     N_DIM = 2
@@ -313,19 +322,19 @@ def evaluate_model(
     
     obs = env.get_observations()
 
-    if correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0:
+    if CORRECTION_MODEL_FILE is not None and (correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0):
         assert 'policy_aaaaaa' in obs.keys()
-    if correction_model_info['obs_insertive_noise_scale'] != 0:
+    if CORRECTION_MODEL_FILE is not None and correction_model_info['obs_insertive_noise_scale'] != 0:
         raise Exception("Right now doesn't support insertive noise!!")
 
     GENERAL_NOISE_SCALES = torch.tensor(cur_utils.GENERAL_NOISE_SCALES, device=device)
 
-    sys_noises = torch.randn(N, A_DIM, device=device) * correction_model_info['sys_noise_scale'] * GENERAL_NOISE_SCALES
-    print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
-    obs_receptive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
-    print(f"Using obs_receptive_noise of {correction_model_info['obs_receptive_noise_scale']}")
-    obs_insertive_noise = torch.cat([torch.randn(N, 2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(N, 4, device=device)], dim=-1)
-    print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
+    sys_noises = torch.randn(N, A_DIM, device=device) * SYS_NOISE_SCALE * GENERAL_NOISE_SCALES
+    print(f"Using systematic noise of {SYS_NOISE_SCALE}")
+    obs_receptive_noise = torch.cat([torch.randn(N, 2, device=device) * OBS_RECEPTIVE_NOISE_SCALE, torch.zeros(N, 4, device=device)], dim=-1)
+    print(f"Using obs_receptive_noise of {OBS_RECEPTIVE_NOISE_SCALE}")
+    obs_insertive_noise = torch.cat([torch.randn(N, 2, device=device) * OBS_INSERTIVE_NOISE_SCALE, torch.zeros(N, 4, device=device)], dim=-1)
+    print(f"Using obs_insertive_noise of {OBS_INSERTIVE_NOISE_SCALE}")
 
     ENABLE_CAMERAS = enable_cameras
     if ENABLE_CAMERAS:
@@ -365,6 +374,7 @@ def evaluate_model(
             need_residuals = curstates > 0
             need_residuals_count = need_residuals.sum()
             if need_residuals_count > 0:
+                assert not BASE_POLICY_ONLY, "Shouldn't get here."
                 contexts = torch.cat([rec_observations[need_residuals, 0, :, :], rec_actions[need_residuals, 0, :, :]], dim=2)
                 currents = obs['policy2'][need_residuals].clone()
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
@@ -379,8 +389,6 @@ def evaluate_model(
 
                 residual_actions = correction_model.get_action(contexts, currents, cur_base_actions, padding_mask, mu_conditioning=mu_conditioning)
                 base_actions[need_residuals, :] = residual_actions
-            if TRAIN_EXPERT:
-                base_actions[curstates == 0] *= 0
             
             # step
             next_obs, reward, dones, info = env.step(base_actions)
@@ -431,24 +439,27 @@ def evaluate_model(
                     timesteps[i] *= 0
                     successes[i] = False
                     curstates[i] *= 0
-                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * GENERAL_NOISE_SCALES
-                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
-                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
+                    sys_noises[i] = torch.randn(A_DIM, device=device) * SYS_NOISE_SCALE * GENERAL_NOISE_SCALES
+                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * OBS_RECEPTIVE_NOISE_SCALE, torch.zeros(4, device=device)], dim=-1)
+                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * OBS_INSERTIVE_NOISE_SCALE, torch.zeros(4, device=device)], dim=-1)
                     starting_positions[i] = get_positions(env.env.env)[i]
                     trajectory_start_position[i] = get_starting_position(env)[i]
                     continue
                 
-                if curstates[i] > 0 or successes[i, curstates[i]]:
+                if curstates[i] > 0 or successes[i, curstates[i]] or BASE_POLICY_ONLY:
                     curi = curstates[i].cpu() + 1 if successes[i, curstates[i]] else 0
+                    # curi = 0 -> Both failed; curi = 1 -> First try success; curi = 2 -> Second try success;
                     count_success[curi] += 1
-                    if curi == 2 or curi == 0:
+                    if not BASE_POLICY_ONLY and (curi == 2 or curi == 0):
                         result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), curi == 2])
+                    if BASE_POLICY_ONLY:
+                        result_success_distribution.append([trajectory_start_position[i].detach().cpu().numpy().copy(), curi == 1])
 
                     if ENABLE_CAMERAS and count_success[curi] <= NUM_VIDEOS:
                         videopath = videopath_generator(curi, count_success[curi].item())
                         maxt = (rec_rewards[i, curstates[i]] < SUCCESS_THRESHOLD).sum()
                         maxt = min(maxt + 1, timesteps[i, curstates[i]])
-                        if TRAIN_EXPERT:
+                        if BASE_POLICY_ONLY:
                             # visualize expert trajectory
                             frames = rec_video[i, curstates[i], :maxt]
                         elif curi == 1:
@@ -483,9 +494,9 @@ def evaluate_model(
                     timesteps[i] *= 0
                     successes[i] = False
                     curstates[i] *= 0
-                    sys_noises[i] = torch.randn(A_DIM, device=device) * correction_model_info['sys_noise_scale'] * GENERAL_NOISE_SCALES
-                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
-                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=device)], dim=-1)
+                    sys_noises[i] = torch.randn(A_DIM, device=device) * SYS_NOISE_SCALE * GENERAL_NOISE_SCALES
+                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=device) * OBS_RECEPTIVE_NOISE_SCALE, torch.zeros(4, device=device)], dim=-1)
+                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=device) * OBS_INSERTIVE_NOISE_SCALE, torch.zeros(4, device=device)], dim=-1)
                     starting_positions[i] = get_positions(env.env.env)[i]
                     trajectory_start_position[i] = get_starting_position(env)[i]
                 else:
@@ -640,11 +651,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     policy = runner.get_inference_policy(device=env.unwrapped.device)
     policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
-    correction_model_file = pathlib.Path(args_cli.correction_model)
     base_policy_file = args_cli.base_policy
     if base_policy_file == "" or base_policy_file == "none":
         base_policy_file = None
-    if correction_model_file.is_file():
+    if args_cli.correction_model is None or pathlib.Path(args_cli.correction_model).is_file():
         evaluate_model(
             env,
             policy,
@@ -662,7 +672,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             no_viz=args_cli.no_viz,
             eval_mode=args_cli.eval_mode,
         )
-    elif correction_model_file.is_dir():
+    elif pathlib.Path(args_cli.correction_model).is_dir():
+        correction_model_file = pathlib.Path(args_cli.correction_model)
         checkpoints = list(correction_model_file.glob("*.pt"))
         checkpoints = [int(ckpt.name.replace("-ckpt.pt", "")) for ckpt in checkpoints if ckpt.name.endswith("-ckpt.pt")]
         checkpoints = sorted(checkpoints)
@@ -704,6 +715,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         fig.savefig(str(correction_model_file / "viz" / "success_rate_over_checkpoints.png"))
         print(correction_model_file / "viz" / "success_rate_over_checkpoints.png")
         plt.close(fig)
+    
+    else:
+        raise NotImplementedError("Only support file or directory for correction model")
     
     # close the simulator
     env.close()
