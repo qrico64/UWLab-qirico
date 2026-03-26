@@ -245,8 +245,8 @@ def evaluate_model(
 
     # Rico: Instantiate base policy!!
     BASE_POLICY_FILE = pathlib.Path(base_policy_file) if base_policy_file is not None else None
-    if base_policy_file is not None:
-        base_policy_raw, base_policy_info = load_robot_policy(base_policy_file, device=device)
+    if BASE_POLICY_FILE is not None:
+        base_policy_raw, base_policy_info = load_robot_policy(BASE_POLICY_FILE, device=device)
         assert base_policy_info['train_expert']
         def base_policy(obs_input_dict):
             with torch.no_grad():
@@ -264,7 +264,7 @@ def evaluate_model(
     if CORRECTION_MODEL_FILE is not None:
         print(f"Loading model at {CORRECTION_MODEL_FILE}")
         assert CORRECTION_MODEL_FILE.is_file()
-        correction_model, correction_model_info = load_robot_policy(str(CORRECTION_MODEL_FILE), device=device)
+        correction_model, correction_model_info = load_robot_policy(CORRECTION_MODEL_FILE, device=device)
         assert correction_model_info['infer_mode'] not in ["expert", "expert_new"]
         BASE_POLICY_ONLY = False
     else:
@@ -652,28 +652,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
     base_policy_file = args_cli.base_policy
-    if base_policy_file == "" or base_policy_file == "none":
-        base_policy_file = None
-    if args_cli.correction_model is None or pathlib.Path(args_cli.correction_model).is_file():
-        evaluate_model(
-            env,
-            policy,
-            policy_nn,
-            base_policy_file=base_policy_file,
-            correction_model_file=args_cli.correction_model,
-            num_evals=args_cli.num_evals,
-            reset_mode=args_cli.reset_mode,
-            enable_cameras=args_cli.enable_cameras,
-            plot_residual=args_cli.plot_residual,
-            video_path=args_cli.video_path,
-            horizon=args_cli.horizon,
-            device=agent_cfg.device,
-            need_reset_envs=False,
-            no_viz=args_cli.no_viz,
-            eval_mode=args_cli.eval_mode,
-        )
-    elif pathlib.Path(args_cli.correction_model).is_dir():
-        correction_model_file = pathlib.Path(args_cli.correction_model)
+    base_policy_file = None if base_policy_file in (None, "", "none") else pathlib.Path(base_policy_file)
+    correction_model_file = args_cli.correction_model
+    correction_model_file = None if correction_model_file in (None, "", "none") else pathlib.Path(correction_model_file)
+    
+    if correction_model_file is not None and correction_model_file.is_dir():
+        # Eval list of correction models
         checkpoints = list(correction_model_file.glob("*.pt"))
         checkpoints = [int(ckpt.name.replace("-ckpt.pt", "")) for ckpt in checkpoints if ckpt.name.endswith("-ckpt.pt")]
         checkpoints = sorted(checkpoints)
@@ -686,7 +670,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 policy,
                 policy_nn,
                 base_policy_file=base_policy_file,
-                correction_model_file=str(correction_model_path),
+                correction_model_file=correction_model_path,
                 num_evals=args_cli.num_evals * 4 if correction_model_path == correction_model_files[-1] else args_cli.num_evals,
                 reset_mode=args_cli.reset_mode,
                 enable_cameras=args_cli.enable_cameras,
@@ -715,9 +699,67 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         fig.savefig(str(correction_model_file / "viz" / "success_rate_over_checkpoints.png"))
         print(correction_model_file / "viz" / "success_rate_over_checkpoints.png")
         plt.close(fig)
-    
+    elif base_policy_file is not None and base_policy_file.is_dir():
+        # Eval list of base policies
+        checkpoints = list(base_policy_file.glob("*.pt"))
+        checkpoints = [int(ckpt.name.replace("-ckpt.pt", "")) for ckpt in checkpoints if ckpt.name.endswith("-ckpt.pt")]
+        checkpoints = sorted(checkpoints)
+        base_policy_files = [base_policy_file / f"{ckpt}-ckpt.pt" for ckpt in checkpoints]
+        success_rates = []
+        for base_policy_path in base_policy_files:
+            print(f"Evaluating base policy at {base_policy_path}...")
+            success_rate = evaluate_model(
+                env,
+                policy,
+                policy_nn,
+                base_policy_file=base_policy_path,
+                correction_model_file=correction_model_file,
+                num_evals=args_cli.num_evals * 4 if base_policy_path == base_policy_files[-1] else args_cli.num_evals,
+                reset_mode=args_cli.reset_mode,
+                enable_cameras=args_cli.enable_cameras,
+                plot_residual=args_cli.plot_residual,
+                video_path=str(args_cli.video_path) if args_cli.video_path else None,
+                horizon=args_cli.horizon,
+                device=agent_cfg.device,
+                need_reset_envs=True,
+                no_viz=args_cli.no_viz,
+                eval_mode=args_cli.eval_mode,
+            )
+            success_rates.append(success_rate)
+        
+        print(checkpoints)
+        print(success_rates)
+        (base_policy_file / "viz").mkdir(parents=True, exist_ok=True)
+        with open(base_policy_file / "viz" / "success_rate_over_checkpoints.txt", 'w') as f:
+            for ckpt, rate in zip(checkpoints, success_rates):
+                f.write(f"{ckpt} {rate}\n")
+
+        fig, ax = plt.subplots()
+        ax.plot(checkpoints, success_rates, marker='o')
+        ax.set_xlabel("Checkpoint")
+        ax.set_ylabel("Independent Success Rate")
+        (base_policy_file / "viz").mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(base_policy_file / "viz" / "success_rate_over_checkpoints.png"))
+        print(base_policy_file / "viz" / "success_rate_over_checkpoints.png")
+        plt.close(fig)
     else:
-        raise NotImplementedError("Only support file or directory for correction model")
+        evaluate_model(
+            env,
+            policy,
+            policy_nn,
+            base_policy_file=base_policy_file,
+            correction_model_file=correction_model_file,
+            num_evals=args_cli.num_evals,
+            reset_mode=args_cli.reset_mode,
+            enable_cameras=args_cli.enable_cameras,
+            plot_residual=args_cli.plot_residual,
+            video_path=args_cli.video_path,
+            horizon=args_cli.horizon,
+            device=agent_cfg.device,
+            need_reset_envs=False,
+            no_viz=args_cli.no_viz,
+            eval_mode=args_cli.eval_mode,
+        )
     
     # close the simulator
     env.close()
