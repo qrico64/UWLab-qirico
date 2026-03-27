@@ -531,7 +531,10 @@ def evaluate_model(
     print(f"Correction model at {CORRECTION_MODEL_FILE}")
     print(f"Base policy at {BASE_POLICY_FILE}")
     print(f"Eval mode: {eval_mode}")
-    final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
+    if BASE_POLICY_ONLY:
+        final_success_rate = (count_success[1] / count_success.sum()).detach().cpu().item()
+    else:
+        final_success_rate = (count_success[2] / (count_success.sum() - count_success[1])).detach().cpu().item()
 
     avg_first_traj_mse = first_traj_mse_sum / first_traj_mse_count if first_traj_mse_count > 0 else float("nan")
     with open(VIZ_DIRECTORY / "first_traj_mse.txt", 'w') as f:

@@ -258,6 +258,8 @@ class RobotTransformerPolicy(nn.Module):
             return torch.cat([current[:, :45], current[:, 52:]], dim=-1)
         elif self.policy_cfg["state_type"] == "timestep":
             return torch.cat([current[:, 52:53]], dim=-1)
+        elif self.policy_cfg["state_type"] == "state_timestep":
+            return torch.cat([current[:, :45], current[:, 52:53]], dim=-1)
         else:
             raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
 
