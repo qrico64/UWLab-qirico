@@ -44,6 +44,7 @@ parser.add_argument("--reset_mode", type=str, default='none', help="Options: non
 parser.add_argument("--no_viz", action="store_true", default=False, help="Whether to disable all visualization (including videos).")
 parser.add_argument("--eval_mode", type=str, default='default', help="Options: default, sysnoise3, obsnoise001.")
 parser.add_argument("--our_task", choices=["drawer", "leg", "peg"], default=None)
+parser.add_argument("--sim_device", type=str, default="cuda:0", help="Device to run the simulation on.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -216,7 +217,7 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
     return frame
 
 
-def evaluate_model(
+def evaluate_model_raw(
     env,
     expert_policy,
     policy_nn,
@@ -282,7 +283,9 @@ def evaluate_model(
         SYS_NOISE_SCALE = 3.0
     elif eval_mode == 'obsnoise001':
         OBS_RECEPTIVE_NOISE_SCALE = 0.01
-    elif eval_mode == 'default':
+    elif eval_mode == 'default' and CORRECTION_MODEL_FILE is None:
+        pass
+    elif eval_mode == 'default' and CORRECTION_MODEL_FILE is not None:
         SYS_NOISE_SCALE = correction_model_info['sys_noise_scale']
         OBS_RECEPTIVE_NOISE_SCALE = correction_model_info['obs_receptive_noise_scale']
         OBS_INSERTIVE_NOISE_SCALE = correction_model_info['obs_insertive_noise_scale']
@@ -320,7 +323,7 @@ def evaluate_model(
     first_traj_mse_count = 0
     mse_list = []
     
-    obs = env.get_observations()
+    obs = env.get_observations().to(device)
 
     if CORRECTION_MODEL_FILE is not None and (correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0):
         assert 'policy_aaaaaa' in obs.keys()
@@ -391,7 +394,8 @@ def evaluate_model(
                 base_actions[need_residuals, :] = residual_actions
             
             # step
-            next_obs, reward, dones, info = env.step(base_actions)
+            next_obs, reward, dones, info = env.step(base_actions.to(env.unwrapped.device))
+            next_obs, reward, dones = next_obs.to(device), reward.to(device), dones.to(device)
 
             # handle non-dones
             indices = torch.arange(N, device=device)
@@ -551,6 +555,15 @@ def evaluate_model(
         f.write(f"{final_success_rate}")
     return final_success_rate
 
+def evaluate_model(*args, **kwargs):
+    try:
+        return evaluate_model_raw(*args, **kwargs)
+    except Exception as e:
+        print(f"Error evaluating model: {e}")
+        return float("nan")
+
+
+
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -567,7 +580,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    env_cfg.sim.device = args_cli.sim_device
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -651,7 +664,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     runner.load(resume_path)
 
     # Expert policy as in Omnireset.
-    policy = runner.get_inference_policy(device=env.unwrapped.device)
+    policy = runner.get_inference_policy(device=args_cli.device)
     policy_nn = runner.alg.policy if hasattr(runner.alg, "policy") else runner.alg.actor_critic
     
     base_policy_file = args_cli.base_policy
@@ -728,7 +741,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 no_viz=args_cli.no_viz,
                 eval_mode=args_cli.eval_mode,
             )
-            success_rates.append(success_rate)
+            if not np.isnan(success_rate):
+                success_rates.append(success_rate)
         
         print(checkpoints)
         print(success_rates)
