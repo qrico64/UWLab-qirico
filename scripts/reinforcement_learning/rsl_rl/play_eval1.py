@@ -197,21 +197,21 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
     cv2.putText(
         frame,
         captions[0],
-        org=(5, 10),
+        org=(5, 25),
         fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-        fontScale=0.4,
+        fontScale=0.8,
         color=(0, 0, 0),  # BGR: black
-        thickness=1,
+        thickness=2,
         lineType=cv2.LINE_AA,
     )
     cv2.putText(
         frame,
         ' '.join(captions[1:]),
-        org=(5, 28),
+        org=(5, 60),
         fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-        fontScale=0.4,
+        fontScale=0.8,
         color=(0, 0, 0),  # BGR: black
-        thickness=1,
+        thickness=2,
         lineType=cv2.LINE_AA,
     )
     return frame
@@ -283,6 +283,9 @@ def evaluate_model_raw(
         SYS_NOISE_SCALE = 3.0
     elif eval_mode == 'obsnoise001':
         OBS_RECEPTIVE_NOISE_SCALE = 0.01
+    elif eval_mode == 'o1s2':
+        OBS_RECEPTIVE_NOISE_SCALE = 0.01
+        SYS_NOISE_SCALE = 2.0
     elif eval_mode == 'default' and CORRECTION_MODEL_FILE is None:
         pass
     elif eval_mode == 'default' and CORRECTION_MODEL_FILE is not None:
@@ -347,7 +350,7 @@ def evaluate_model_raw(
         os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
         NUM_VIDEOS = 6
-        VIDEO_FPS = 5
+        VIDEO_FPS = 6
     
     starting_positions = get_positions(env.env.env)
 
@@ -412,7 +415,7 @@ def evaluate_model_raw(
                     frames = (frames * 255).astype(np.uint8)
                 
                 for i in range(N):
-                    assert frames[i].shape == (*IMAGE_SIZE, 3)
+                    assert frames[i].shape == (*IMAGE_SIZE, 3), f"{frames[i].shape} != {IMAGE_SIZE}"
                     if PLOT_RESIDUAL:
                         display_action = expert_actions[i] - base_actions_raw[i]
                         display_action2 = base_actions[i] - base_actions_raw[i]
@@ -559,8 +562,7 @@ def evaluate_model(*args, **kwargs):
     try:
         return evaluate_model_raw(*args, **kwargs)
     except Exception as e:
-        print(f"Error evaluating model: {e}")
-        return float("nan")
+        raise
 
 
 
@@ -608,7 +610,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # set camera & video
     if args_cli.enable_cameras:
-        IMAGE_SIZE = (400, 400)
+        IMAGE_SIZE = (800, 800)
         assert IMAGE_SIZE[0] == IMAGE_SIZE[1]
         env_cfg.scene.side_camera = TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/rgb_side_camera",
@@ -690,6 +692,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 num_evals=args_cli.num_evals * 4 if correction_model_path == correction_model_files[-1] else args_cli.num_evals,
                 reset_mode=args_cli.reset_mode,
                 enable_cameras=args_cli.enable_cameras,
+                IMAGE_SIZE=IMAGE_SIZE,
                 plot_residual=args_cli.plot_residual,
                 video_path=str(args_cli.video_path) if args_cli.video_path else None,
                 horizon=args_cli.horizon,
@@ -733,6 +736,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 num_evals=args_cli.num_evals * 4 if base_policy_path == base_policy_files[-1] else args_cli.num_evals,
                 reset_mode=args_cli.reset_mode,
                 enable_cameras=args_cli.enable_cameras,
+                IMAGE_SIZE=IMAGE_SIZE,
                 plot_residual=args_cli.plot_residual,
                 video_path=str(args_cli.video_path) if args_cli.video_path else None,
                 horizon=args_cli.horizon,
@@ -769,6 +773,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             num_evals=args_cli.num_evals,
             reset_mode=args_cli.reset_mode,
             enable_cameras=args_cli.enable_cameras,
+            IMAGE_SIZE=IMAGE_SIZE,
             plot_residual=args_cli.plot_residual,
             video_path=args_cli.video_path,
             horizon=args_cli.horizon,
