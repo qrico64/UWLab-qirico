@@ -1,12 +1,12 @@
 #!/bin/bash -l
 #SBATCH --job-name=finetune        # Job name
-#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar17/residual_o10r2_lr1e_4_stateonly/finetune-xleq035-f22/log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar17/residual_o10r2_lr1e_4_stateonly/finetune-xleq035-f22/log/%j_%x_err.txt         # Error file
+#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o0015s4r2__s_kl1e_6_seed1/finetune/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o0015s4r2__s_kl1e_6_seed1/finetune/log/%j_%x_err.txt         # Error file
 #SBATCH --time=24:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
 #SBATCH --cpus-per-task=6          # CPUs per task
-#SBATCH --gres=gpu:l40:1               # GPUs per node (if needed)
+#SBATCH --gres=gpu:a40:1               # GPUs per node (if needed)
 #SBATCH --mem=60G                  # Memory per node
 #SBATCH --partition=ckpt-all        # Partition (queue) name
 #SBATCH --account=weirdlab         # Slurm account/project name
@@ -60,12 +60,12 @@ apptainer exec --nv \
   bash -lc 'set -e
 
 export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
-export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar17/residual_o10r2_lr1e_4_stateonly
+export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o0015s4r2__s_kl1e_6_seed1
 export EPOCHS=1000
 export OUR_TASK=peg
 
 export CORRECTION_MODEL=$CORRECTION_MODEL_DIR/1000-ckpt.pt
-export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune-xleq035-f22
+export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
@@ -88,7 +88,7 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --headless \
   --num_envs 100 \
   --num_evals 2000 \
-  --correction_model $SAVE_PATH \
+  --base_policy $SAVE_PATH \
   --reset_mode xleq035 \
   --eval_mode default
 '

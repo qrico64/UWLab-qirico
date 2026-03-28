@@ -41,6 +41,11 @@ def process_finetune_directory(dirpath, filenames, dirnames):
         if step in eval_viz_steps:
             fpath = os.path.join(dirpath, fname)
             delete_file(fpath)
+
+            # --- NEW: also delete latest.pt ---
+            latest_path = os.path.join(dirpath, "latest.pt")
+            if os.path.exists(latest_path):
+                delete_file(latest_path)
         else:
             print(f"Keeping (no eval_viz): {os.path.join(dirpath, fname)}")
 
@@ -50,6 +55,11 @@ def process_regular_directory(dirpath, filenames):
     In regular dirs, keep only the highest-step checkpoint.
     """
     ckpts = []
+
+    # --- NEW: also delete latest.pt ---
+    latest_path = os.path.join(dirpath, "latest.pt")
+    if os.path.exists(latest_path):
+        delete_file(latest_path)
 
     for fname in filenames:
         m = CKPT_PATTERN.match(fname)

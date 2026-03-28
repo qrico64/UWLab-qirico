@@ -1,13 +1,13 @@
 #!/bin/bash -l
-#SBATCH --job-name=d_pz2        # Job name
-#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar19/peg_recxgeq05_o001r2z004/log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar19/peg_recxgeq05_o001r2z004/log/%j_%x_err.txt         # Error file
+#SBATCH --job-name=d_po1s1        # Job name
+#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar28/peg_recxgeq05_o001s1r2/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar28/peg_recxgeq05_o001s1r2/log/%j_%x_err.txt         # Error file
 #SBATCH --time=12:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
 #SBATCH --cpus-per-task=12          # CPUs per task
 #SBATCH --gres=gpu:a40:1               # GPUs per node (if needed)
-#SBATCH --mem=150G                  # Memory per node
+#SBATCH --mem=240G                  # Memory per node
 #SBATCH --partition=ckpt-all        # Partition (queue) name
 #SBATCH --account=weirdlab         # Slurm account/project name
 
@@ -24,7 +24,7 @@ echo
 echo
 
 # Run your program
-export SAVE_PATH=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar19/peg_recxgeq05_o001r2z004/
+export SAVE_PATH=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar27/peg_recxgeq05_o001s2r2/
 mkdir -p $SAVE_PATH
 cp c.slurm $SAVE_PATH/
 cp scripts/reinforcement_learning/rsl_rl/play2.py $SAVE_PATH/
@@ -66,7 +66,7 @@ apptainer exec --nv \
   --headless \
   --num_envs 1000 \
   --use_general_scales \
-  --sys_noise_scale 0.0 \
+  --sys_noise_scale 1.0 \
   --rand_noise_scale 2.0 \
   --num_trajectories 100000 \
   --obs_receptive_noise_scale 0.01 \
