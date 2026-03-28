@@ -609,8 +609,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"Horizon: {args_cli.horizon}")
 
     # set camera & video
+    IMAGE_SIZE = (800, 800)
     if args_cli.enable_cameras:
-        IMAGE_SIZE = (800, 800)
         assert IMAGE_SIZE[0] == IMAGE_SIZE[1]
         env_cfg.scene.side_camera = TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/rgb_side_camera",
