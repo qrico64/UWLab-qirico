@@ -29,6 +29,7 @@ echo $IS_EXPERT
 echo $EPOCHS
 echo $OUR_TASK
 echo $BASE_POLICY
+echo $SAVE_PATH_NAME
 
 export UW_BASE=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/docker
 
@@ -48,6 +49,7 @@ apptainer exec --nv \
   --env OUR_TASK="$OUR_TASK" \
   --env IS_EXPERT="$IS_EXPERT" \
   --env BASE_POLICY="$BASE_POLICY" \
+  --env SAVE_PATH_NAME="$SAVE_PATH_NAME" \
   --bind /mmfs1/gscratch/stf/:/mmfs1/gscratch/stf/ \
   --bind /gscratch/scrubbed/qirico/:/gscratch/scrubbed/qirico/ \
   --bind /etc/pki:/etc/pki \
@@ -67,7 +69,7 @@ apptainer exec --nv \
   bash -lc '
 
 export CORRECTION_MODEL=${SAVE_PATH}/${EPOCHS}-ckpt.pt
-export SAVE_PATH_NEW=${SAVE_PATH}/finetune
+export SAVE_PATH_NEW=${SAVE_PATH}/${SAVE_PATH_NAME}
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \

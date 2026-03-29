@@ -69,7 +69,7 @@ if [ "$IS_EXPERT" = "0" ]; then
       --job-name="t$RUN_NAME" \
       --dependency=afterok:"$train_job_id" \
       --kill-on-invalid-dep=yes \
-      --export=ALL,SAVE_PATH="$SAVE_PATH",IS_EXPERT="$IS_EXPERT",EPOCHS="$EPOCHS",OUR_TASK="$OUR_TASK",BASE_POLICY="$BASE_POLICY" \
+      --export=ALL,SAVE_PATH="$SAVE_PATH",IS_EXPERT="$IS_EXPERT",EPOCHS="$EPOCHS",OUR_TASK="$OUR_TASK",BASE_POLICY="$BASE_POLICY",SAVE_PATH_NAME="finetune-feb22" \
       --output="$SAVE_PATH/log/ttt_%j_%x_out.txt" \
       --error="$SAVE_PATH/log/ttt_%j_%x_err.txt" \
       "$SAVE_PATH/ttt.slurm"
@@ -81,7 +81,7 @@ if [ "$IS_EXPERT" = "0" ]; then
       --job-name="t2$RUN_NAME" \
       --dependency=afterok:"$train_job_id" \
       --kill-on-invalid-dep=yes \
-      --export=ALL,SAVE_PATH="$SAVE_PATH",IS_EXPERT="$IS_EXPERT",EPOCHS="$EPOCHS",OUR_TASK="$OUR_TASK",BASE_POLICY="$BASE_POLICY2" \
+      --export=ALL,SAVE_PATH="$SAVE_PATH",IS_EXPERT="$IS_EXPERT",EPOCHS="$EPOCHS",OUR_TASK="$OUR_TASK",BASE_POLICY="$BASE_POLICY2",SAVE_PATH_NAME="finetune-feb8" \
       --output="$SAVE_PATH/log/ttt2_%j_%x_out.txt" \
       --error="$SAVE_PATH/log/ttt2_%j_%x_err.txt" \
       "$SAVE_PATH/ttt.slurm"
