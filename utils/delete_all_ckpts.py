@@ -1,27 +1,30 @@
 import os
 import re
 
-ROOT_DIR = "experiments"
+ROOT_DIR = "experiments/mar27"
 
 CKPT_PATTERN = re.compile(r"^(\d+)-ckpt\.pt$")
 EVAL_VIZ_PATTERN = re.compile(r"^(\d+)-ckpt-eval_viz$")
 
 DRY_RUN = True  # set to False to actually delete
 
+total_deleted_size = 0  # NEW: Track total size
+
 
 def delete_file(path):
+    global total_deleted_size
+    if not os.path.exists(path): return  # Simple check for latest.pt
+    
+    size = os.path.getsize(path)
     if DRY_RUN:
-        print(f"[DRY RUN] Would delete: {path}")
+        print(f"[DRY RUN] Would delete: {path} ({size / 1e6:.2f} MB)")
     else:
-        print(f"Deleting: {path}")
+        print(f"Deleting: {path} ({size / 1e6:.2f} MB)")
         os.remove(path)
+    total_deleted_size += size
 
 
 def process_finetune_directory(dirpath, filenames, dirnames):
-    """
-    In finetune dirs, delete checkpoint N-ckpt.pt iff corresponding
-    directory N-ckpt-eval_viz exists.
-    """
     ckpts = []
     eval_viz_steps = set()
 
@@ -44,23 +47,17 @@ def process_finetune_directory(dirpath, filenames, dirnames):
 
             # --- NEW: also delete latest.pt ---
             latest_path = os.path.join(dirpath, "latest.pt")
-            if os.path.exists(latest_path):
-                delete_file(latest_path)
+            delete_file(latest_path)
         else:
             print(f"Keeping (no eval_viz): {os.path.join(dirpath, fname)}")
 
 
 def process_regular_directory(dirpath, filenames):
-    """
-    In regular dirs, keep only the highest-step checkpoint.
-    """
-    ckpts = []
-
     # --- NEW: also delete latest.pt ---
     latest_path = os.path.join(dirpath, "latest.pt")
-    if os.path.exists(latest_path):
-        delete_file(latest_path)
+    delete_file(latest_path)
 
+    ckpts = []
     for fname in filenames:
         m = CKPT_PATTERN.match(fname)
         if m:
@@ -88,6 +85,8 @@ def main():
             process_finetune_directory(dirpath, filenames, dirnames)
         else:
             process_regular_directory(dirpath, filenames)
+            
+    print(f"\nTotal size {'to be deleted' if DRY_RUN else 'deleted'}: {total_deleted_size / 1e9:.2f} GB")
 
 
 if __name__ == "__main__":

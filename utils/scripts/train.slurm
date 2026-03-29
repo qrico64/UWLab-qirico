@@ -28,6 +28,7 @@ echo
 # Run your program
 conda activate env_uwlab
 
+echo "Running with SLURM_SEED: $SLURM_SEED"
 echo "$SAVE_PATH"
 echo "$IS_EXPERT"
 echo "$EPOCHS"
@@ -55,7 +56,7 @@ python scripts/reinforcement_learning/rsl_rl/train2.py \
     --state_type standard \
     --current_dim 45 \
     --our_task "$OUR_TASK" \
-    --seed 42 \
+    --seed "$SLURM_SEED" \
     \
     --head_arch_version mlpblock_v1 \
     --num_head_layers 5 \

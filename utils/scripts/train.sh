@@ -1,10 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-export SAVE_PATH_FRONT=mar29/residual_o0015s2r2_seed1
-export SAVE_PATH=/gscratch/scrubbed/qirico/$SAVE_PATH_FRONT
+export SEED=1
+export SLURM_SEED=$((SEED + 41))
+
+export SAVE_PATH_FRONT=mar29/residual_o0015s2r2_seed${SEED}
+export SAVE_PATH=/gscratch/scrubbed/qirico/Meta-Learning-25-10-1/$SAVE_PATH_FRONT
 export SAVE_PATH_COPY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/$SAVE_PATH_FRONT
-export RUN_NAME=r1_o15s2
+export RUN_NAME=r${SEED}_o15s2
 export IS_EXPERT=0
 export EPOCHS=1000
 export OUR_TASK=peg
@@ -138,6 +141,8 @@ fi
 
 # Final Job to copy results
 sbatch --job-name="copy_$RUN_NAME" \
+  --account=weirdlab \
+  --partition=ckpt-all \
   --dependency=afterany:"$ALL_IDS" \
   --output="$SAVE_PATH/log/copy_%j.txt" \
   --ntasks=1 --cpus-per-task=1 --mem=4G --time=02:00:00 \
