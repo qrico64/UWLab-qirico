@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-export SAVE_PATH=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o001s2r2_seed1
-export RUN_NAME=r1_o1s2
+export SAVE_PATH_FRONT=mar29/residual_o0015s2r2_seed1
+export SAVE_PATH=/gscratch/scrubbed/qirico/$SAVE_PATH_FRONT
+export SAVE_PATH_COPY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/$SAVE_PATH_FRONT
+export RUN_NAME=r1_o15s2
 export IS_EXPERT=0
 export EPOCHS=1000
 export OUR_TASK=peg
@@ -27,6 +29,7 @@ train_job_id=$(
 )
 
 echo "Submitted train job: $train_job_id"
+ALL_IDS="$train_job_id"
 
 if [ "$OUR_TASK" = "peg" ]; then
   export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
@@ -51,6 +54,7 @@ if [ "$IS_EXPERT" = "0" ]; then
       "$SAVE_PATH/eval.slurm"
   )
   echo "Submitted eval1 job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 
   eval_job_id=$(
     sbatch --parsable \
@@ -63,6 +67,7 @@ if [ "$IS_EXPERT" = "0" ]; then
       "$SAVE_PATH/eval.slurm"
   )
   echo "Submitted eval2 job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 
   eval_job_id=$(
     sbatch --parsable \
@@ -75,6 +80,7 @@ if [ "$IS_EXPERT" = "0" ]; then
       "$SAVE_PATH/ttt.slurm"
   )
   echo "Submitted ttt job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 
   eval_job_id=$(
     sbatch --parsable \
@@ -87,6 +93,7 @@ if [ "$IS_EXPERT" = "0" ]; then
       "$SAVE_PATH/ttt.slurm"
   )
   echo "Submitted ttt2 job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 
 elif [ "$IS_EXPERT" = "1" ]; then
   eval_job_id=$(
@@ -100,6 +107,7 @@ elif [ "$IS_EXPERT" = "1" ]; then
       "$SAVE_PATH/eval.slurm"
   )
   echo "Submitted eval1 job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 
   eval_job_id=$(
     sbatch --parsable \
@@ -112,6 +120,7 @@ elif [ "$IS_EXPERT" = "1" ]; then
       "$SAVE_PATH/eval.slurm"
   )
   echo "Submitted eval2 job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 
   eval_job_id=$(
     sbatch --parsable \
@@ -124,4 +133,16 @@ elif [ "$IS_EXPERT" = "1" ]; then
       "$SAVE_PATH/eval.slurm"
   )
   echo "Submitted eval3 job:  $eval_job_id (depends on train job $train_job_id)"
+  ALL_IDS="$ALL_IDS:$eval_job_id"
 fi
+
+# Final Job to copy results
+sbatch --job-name="copy_$RUN_NAME" \
+  --dependency=afterany:"$ALL_IDS" \
+  --output="$SAVE_PATH/log/copy_%j.txt" \
+  --ntasks=1 --cpus-per-task=1 --mem=4G --time=02:00:00 \
+  --wrap="echo 'Transferring from scrubbed to main storage...'; \
+         echo 'Source: $SAVE_PATH'; \
+         echo 'Dest:   $SAVE_PATH_COPY'; \
+         mkdir -p '$SAVE_PATH_COPY'; \
+         rsync -avP '$SAVE_PATH/' '$SAVE_PATH_COPY/' && echo 'Transfer complete.'"

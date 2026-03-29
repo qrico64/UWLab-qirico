@@ -43,6 +43,10 @@ export JOBTMP=/tmp/${USER}_tmp_${SLURM_JOB_ID:-manual}_$$
 mkdir -p "$JOBTMP"
 chmod 700 "$JOBTMP"
 
+mkdir -p "$SAVE_PATH/logs"
+mkdir -p "$SAVE_PATH/outputs"
+mkdir -p "$SAVE_PATH/data_storage"
+
 apptainer exec --nv \
   --env SAVE_PATH="$SAVE_PATH" \
   --env EPOCHS="$EPOCHS" \
@@ -60,9 +64,9 @@ apptainer exec --nv \
   --bind $UW_BASE/isaac-cache-pip:/root/.cache/pip \
   --bind $UW_BASE/isaac-cache-gl:/root/.cache/nvidia/GLCache \
   --bind $UW_BASE/isaac-cache-compute:/root/.nv/ComputeCache \
-  --bind $UW_BASE/logs:/workspace/uwlab/logs \
-  --bind $UW_BASE/outputs:/workspace/uwlab/outputs \
-  --bind $UW_BASE/data_storage:/workspace/uwlab/data_storage \
+  --bind "$SAVE_PATH/logs:/workspace/uwlab/logs" \
+  --bind "$SAVE_PATH/outputs:/workspace/uwlab/outputs" \
+  --bind "$SAVE_PATH/data_storage:/workspace/uwlab/data_storage" \
   --bind "$JOBTMP:/tmp" \
   --bind $(pwd):/workspace/uwlab \
   uw-lab-2_latest.sif \
