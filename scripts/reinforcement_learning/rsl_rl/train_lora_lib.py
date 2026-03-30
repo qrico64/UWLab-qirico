@@ -225,6 +225,7 @@ def convert_lora_model_to_plain_robot_policy(
         d_model_head=save_dict["d_model_head"],
         infer_mode=save_dict["infer_mode"],
         dropout_head=save_dict["dropout_head"],
+        act_head=save_dict["act_head"],
         mu_head_arch=save_dict["mu_head_arch"],
         mu_size=save_dict["mu_size"],
         mu_kl_factor=save_dict["mu_kl_factor"],

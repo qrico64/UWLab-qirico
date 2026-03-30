@@ -502,6 +502,7 @@ def main():
     parser.add_argument("--num_head_layers", type=int, default=3, help="Number of Linear layers in the head.")
     parser.add_argument("--d_model_head", type=int, default=1024, help="Size of each Linear layer in the head.")
     parser.add_argument("--dropout_head", type=float, default=0.0, help="Dropout rate for head layers.")
+    parser.add_argument("--act_head", type=str, default="relu", help="Activation function for head layers: relu, elu.")
 
     # All the bounds
     parser.add_argument("--receptive_xlow", type=float, default=0.3, help="Lower bound of receptive x position.")
@@ -770,6 +771,7 @@ def main():
         num_head_layers=args.num_head_layers,
         d_model_head=args.d_model_head,
         dropout_head=args.dropout_head,
+        act_head=args.act_head,
         infer_mode=args.infer_mode,
         mu_head_arch=args.mu_head_arch,
         mu_size=args.mu_size,

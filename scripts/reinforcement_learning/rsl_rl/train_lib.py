@@ -30,11 +30,12 @@ class PositionalEncoding(nn.Module):
         return x
 
 class MLPBlock(nn.Module):
-    def __init__(self, in_dim, out_dim, dropout=0.0):
+    def __init__(self, in_dim, out_dim, dropout=0.0, act="relu"):
         super().__init__()
+        act_fn = {"relu": nn.ReLU(), "elu": nn.ELU()}[act]
         listofmodules = [
             nn.Linear(in_dim, out_dim),
-            nn.ReLU(),
+            act_fn,
         ]
         if dropout > 1e-6:
             listofmodules.append(nn.Dropout(dropout))
@@ -56,6 +57,7 @@ class RobotTransformerPolicy(nn.Module):
             num_head_layers=3,
             d_model_head=1024,
             dropout_head=0,
+            act_head="relu",
             infer_mode: str = "residual", # Options: "residual", "expert", "res_scale_shift".
             mu_head_arch: str = "none", # Options: "none", "identity", "linear", "2layer".
             mu_size: int = 512,
@@ -85,6 +87,7 @@ class RobotTransformerPolicy(nn.Module):
             num_head_layers=num_head_layers,
             d_model_head=d_model_head,
             dropout_head=dropout_head,
+            act_head=act_head,
             infer_mode=infer_mode,
             mu_head_arch=mu_head_arch,
             mu_size=mu_size,
@@ -205,12 +208,24 @@ class RobotTransformerPolicy(nn.Module):
             self.head = nn.Sequential(*head_layers)
         elif head_arch_version == "mlpblock_v1":
             assert num_head_layers >= 3
-            head_layers = [MLPBlock(head_in_dim, d_model_head, dropout_head)]
+            head_layers = [MLPBlock(head_in_dim, d_model_head, dropout_head, act_head)]
             for _ in range(num_head_layers - 3):
-                head_layers += [MLPBlock(d_model_head, d_model_head, dropout_head)]
-            head_layers += [MLPBlock(d_model_head, d_model, dropout_head)]
+                head_layers += [MLPBlock(d_model_head, d_model_head, dropout_head, act_head)]
+            head_layers += [MLPBlock(d_model_head, d_model, dropout_head, act_head)]
             head_layers += [nn.Linear(d_model, head_out_dim)]
             self.head = nn.Sequential(*head_layers)
+        elif head_arch_version == "ppo_expert_arch":
+            self.head = nn.Sequential(
+                nn.Linear(head_in_dim, 512),
+                nn.ELU(),
+                nn.Linear(512, 256),
+                nn.ELU(),
+                nn.Linear(256, 128),
+                nn.ELU(),
+                nn.Linear(128, 64),
+                nn.ELU(),
+                nn.Linear(64, head_out_dim),
+            )
         else:
             raise NotImplementedError(f"Unknown head_arch_version: {head_arch_version}")
         print()
@@ -260,16 +275,15 @@ class RobotTransformerPolicy(nn.Module):
             return torch.cat([current[:, 52:53]], dim=-1)
         elif self.policy_cfg["state_type"] == "state_timestep":
             return torch.cat([current[:, :45], current[:, 52:53]], dim=-1)
-        elif self.policy_cfg["state_type"] == "history5":
-            return current[:, 53:278]
-        elif self.policy_cfg["state_type"] == "history3":
+        elif self.policy_cfg["state_type"] in ["history1", "history2", "history3", "history4", "history5"]:
+            H = int(self.policy_cfg["state_type"][7:])
             return torch.cat([
-                current[:, 53 + 12 : 53 + 30], # 18
-                current[:, 53 + 44 : 53 + 65], # 21
-                current[:, 53 + 93 : 53 + 135], # 42
-                current[:, 53 + 147 : 53 + 165], # 18
-                current[:, 53 + 177 : 53 + 195], # 18
-                current[:, 53 + 207 : 53 + 225], # 18
+                current[:, 53 + 30 - 6 * H : 53 + 30], # 18
+                current[:, 53 + 65 - 7 * H : 53 + 65], # 21
+                current[:, 53 + 135 - 14 * H : 53 + 135], # 42
+                current[:, 53 + 165 - 6 * H : 53 + 165], # 18
+                current[:, 53 + 195 - 6 * H : 53 + 195], # 18
+                current[:, 53 + 225 - 6 * H : 53 + 225], # 18
             ], dim=-1)
         else:
             raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
@@ -509,6 +523,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "combined_kl_factor": 0.0,
             "force_mu_conditioning": "none",
             "force_mu_conditioning_size": 2,
+            "act_head": "relu",
         } | save_dict
         REQUIRED_LENGTH = 45 + 7 + 1 + 225
         if save_dict['current_means'].shape[0] < REQUIRED_LENGTH:
@@ -534,6 +549,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             d_model_head=save_dict["d_model_head"],
             infer_mode=save_dict["infer_mode"],
             dropout_head=save_dict["dropout_head"],
+            act_head=save_dict["act_head"],
             mu_head_arch=save_dict["mu_head_arch"],
             mu_size=save_dict["mu_size"],
             mu_kl_factor=save_dict["mu_kl_factor"],
