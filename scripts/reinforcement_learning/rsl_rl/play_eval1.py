@@ -88,6 +88,7 @@ from PIL import Image, ImageDraw, ImageFont
 import cv2
 import pathlib
 import matplotlib.pyplot as plt
+import re
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -253,7 +254,7 @@ def evaluate_model_raw(
             with torch.no_grad():
                 return base_policy_raw.get_action(
                     torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['context_dim'], device=device),
-                    torch.cat([obs_input_dict['policy2'], torch.zeros(len(obs_input_dict), 7 + 1 + 225, device=device)], dim=-1),
+                    torch.cat([obs_input_dict['policy2'], torch.zeros(len(obs_input_dict), 7 + 1, device=device), obs_input_dict['policy']], dim=-1),
                     torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['label_dim'], device=device),
                     padding_mask=torch.zeros(len(obs_input_dict), T_DIM, dtype=torch.bool, device=device),
                 )
@@ -275,6 +276,7 @@ def evaluate_model_raw(
 
     # Eval mode stuff
     SYS_NOISE_SCALE = 0.0
+    RAND_NOISE_SCALE = 0.0
     OBS_RECEPTIVE_NOISE_SCALE = 0.0
     OBS_INSERTIVE_NOISE_SCALE = 0.0
     if BASE_POLICY_FILE is not None:
@@ -292,6 +294,17 @@ def evaluate_model_raw(
         SYS_NOISE_SCALE = correction_model_info['sys_noise_scale']
         OBS_RECEPTIVE_NOISE_SCALE = correction_model_info['obs_receptive_noise_scale']
         OBS_INSERTIVE_NOISE_SCALE = correction_model_info['obs_insertive_noise_scale']
+    elif re.match(r"o\d+s\d+r\d+", eval_mode):
+        m = re.match(r"o(\d+)s(\d+)r(\d+)", eval_mode)
+        OBS_RECEPTIVE_NOISE_SCALE = int(m.group(1)) / 1000.0
+        SYS_NOISE_SCALE = float(m.group(2))
+        RAND_NOISE_SCALE = float(m.group(3))
+        print(f"Dynamic eval mode: obs={OBS_RECEPTIVE_NOISE_SCALE}, sys={SYS_NOISE_SCALE}, rand={RAND_NOISE_SCALE}")
+    elif re.match(r"o\d+s\d+", eval_mode):
+        m = re.match(r"o(\d+)s(\d+)", eval_mode)
+        OBS_RECEPTIVE_NOISE_SCALE = int(m.group(1)) / 1000.0
+        SYS_NOISE_SCALE = float(m.group(2))
+        print(f"Dynamic eval mode: obs={OBS_RECEPTIVE_NOISE_SCALE}, sys={SYS_NOISE_SCALE}")
     else:
         raise NotImplementedError(f"Eval mode {eval_mode} not implemented.")
 
@@ -375,7 +388,8 @@ def evaluate_model_raw(
 
             base_actions_raw = base_policy(obs_tweaked)
 
-            base_actions_raw += sys_noises
+            rand_noise = torch.randn(N, A_DIM, device=device) * RAND_NOISE_SCALE * GENERAL_NOISE_SCALES
+            base_actions_raw += sys_noises + rand_noise
             base_actions = base_actions_raw.clone()
 
             need_residuals = curstates > 0
