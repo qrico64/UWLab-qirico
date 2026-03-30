@@ -4,17 +4,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- CONFIG ---
-REFERENCE_FILE = [
-    "experiments/mar15/finetune/residual_o003s4r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16/viz/success_rate_over_checkpoints.txt",
-    "experiments/mar14/residual_o003s4r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16_seed2/finetune-xleq035/viz/success_rate_over_checkpoints.txt",
-    "experiments/mar14/residual_o003s4r2_lr1e_4_perfect_cov_kl_mu_1e_3_d16_seed3/finetune-xleq035/viz/success_rate_over_checkpoints.txt",
-]
-# REFERENCE_FILE = "/path/to/seed1/.../success_rate_over_checkpoints.txt"
+REFERENCE_FILE = "experiments/mar29/residual_o0015s2r4_seed3/finetune-feb22/viz/success_rate_over_checkpoints.txt"
 
 NUM_SEEDS = 3
 
-PLOT_MEAN_STD = True  # True → mean+std, False → individual curves
+PLOT_MEAN_STD = False  # True → mean+std, False → individual curves
 OUTPUT_NAME = "success_rate_across_seeds.png" if PLOT_MEAN_STD else "success_rate_across_seeds_individual.png"
+DATA_OUTPUT_NAME = "success_rate_across_seeds.txt"
 
 
 def load_success_rates(path):
@@ -55,21 +51,19 @@ def main():
     all_steps = sorted(set().union(*[run.keys() for run in runs]))
     steps = np.array(all_steps)
 
+    # Calculate statistics for both plotting and file saving
+    means, stds = [], []
+    for step in all_steps:
+        vals = [run[step] for run in runs if step in run]
+        means.append(np.mean(vals))
+        stds.append(np.std(vals))
+    means, stds = np.array(means), np.array(stds)
+
     plt.figure(figsize=(8, 5))
 
     if PLOT_MEAN_STD:
-        means, stds = [], []
-        for step in all_steps:
-            vals = [run[step] for run in runs if step in run]
-            means.append(np.mean(vals))
-            stds.append(np.std(vals))
-
-        means = np.array(means)
-        stds = np.array(stds)
-
         plt.plot(steps, means, marker="o", linewidth=2, label="Mean")
         plt.fill_between(steps, means - stds, means + stds, alpha=0.2, label="Std")
-
     else:
         for i, run in enumerate(runs):
             run_steps = sorted(run.keys())
@@ -88,9 +82,19 @@ def main():
     plt.tight_layout()
 
     for path in seed_files:
-        out_path = os.path.join(os.path.dirname(path), OUTPUT_NAME)
+        dir_path = os.path.dirname(path)
+        
+        # Save Plot
+        out_path = os.path.join(dir_path, OUTPUT_NAME)
         plt.savefig(out_path, dpi=200)
-        print(f"Saved: {out_path}")
+        
+        # Save Data File
+        txt_path = os.path.join(dir_path, DATA_OUTPUT_NAME)
+        with open(txt_path, "w") as f:
+            for s, m, std in zip(steps, means, stds):
+                f.write(f"{s} {m} {std}\n")
+                
+        print(f"Saved: {out_path} and {txt_path}")
 
     plt.close()
 
