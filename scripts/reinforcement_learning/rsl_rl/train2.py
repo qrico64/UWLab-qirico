@@ -619,7 +619,7 @@ def main():
             current__timesteps = np.arange(traj['actions'].shape[0], dtype=np.float32)[:, None]
             processed_traj = {
                 'context': np.concatenate([traj['obs']['policy2'], traj['actions']], axis=1),
-                'current': np.concatenate([traj['obs']['policy2'], traj['actions'], current__timesteps], axis=1),
+                'current': np.concatenate([traj['obs']['policy2'], traj['actions'], current__timesteps, traj['obs']['policy']], axis=1),
                 'base_actions': traj['actions'],
                 'expert_actions': traj['actions_expert'],
                 'choosable': traj['obs']['policy2'].shape[0] > 6,

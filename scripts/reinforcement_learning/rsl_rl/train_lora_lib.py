@@ -205,8 +205,8 @@ def convert_lora_model_to_plain_robot_policy(
       - lora_model is a RobotTransformerPolicy whose nn.Linear may be replaced by LoRALinear.
       - lora_model should ideally have lora_model.policy_cfg (recommended).
     """
-    if not isinstance(lora_model, RobotTransformerPolicy):
-        raise TypeError(f"Expected lora_model to be RobotTransformerPolicy, got {type(lora_model)}")
+    # if not isinstance(lora_model, RobotTransformerPolicy):
+    #     raise TypeError(f"Expected lora_model to be RobotTransformerPolicy, got {type(lora_model)}")
 
     # 1) Get architecture from model (prefer saved config)
     save_dict = dict(lora_model.policy_cfg)

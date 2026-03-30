@@ -120,7 +120,7 @@ import train_lib
 import cur_utils
 import train_lora_lib
 
-ENABLE_WANDB = True
+ENABLE_WANDB = False
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -372,6 +372,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     timesteps = torch.zeros(env.num_envs, N_DIM, dtype=torch.int64, device=args_cli.device)
     successes = torch.zeros(env.num_envs, N_DIM, dtype=torch.bool, device=args_cli.device)
     rec_observations = torch.zeros(env.num_envs, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=args_cli.device)
+    rec_observations_policy = torch.zeros(env.num_envs, N_DIM, T_DIM, 225, dtype=torch.float32, device=args_cli.device)
     rec_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
     rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
     curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
@@ -467,7 +468,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                 fake_context = torch.zeros(env.num_envs, args_cli.horizon, base_policy_info['context_dim'], dtype=torch.float32, device=args_cli.device)
                 fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
-                currents = torch.cat([obs['policy2'], torch.zeros(env.num_envs, 8, dtype=torch.float32, device=args_cli.device)], dim=-1)
+                currents = torch.cat([obs['policy2'], torch.zeros(env.num_envs, 7 + 1 + 225, dtype=torch.float32, device=args_cli.device)], dim=-1)
                 currents = (currents - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
                 fake_base_actions = torch.zeros(env.num_envs, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
                 base_actions = base_policy.get_action(fake_context, currents, fake_base_actions, padding_mask=fake_padding_mask)
@@ -480,6 +481,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 indices = torch.arange(env.num_envs, device=args_cli.device)
                 cur_timesteps = timesteps[indices, curstates]
                 rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
+                rec_observations_policy[indices, curstates, cur_timesteps, :] = obs['policy']
                 rec_actions[indices, curstates, cur_timesteps, :] = base_actions
                 rec_rewards[indices, curstates, cur_timesteps] = reward
                 rec_expert_actions[indices, curstates, cur_timesteps] = expert_action
@@ -496,9 +498,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     T = min(timesteps[i, 0], (rec_rewards[i, 0, :timesteps[i, 0]] < SUCCESS_THRESHOLD).sum() + 1)
                     context = torch.cat([rec_observations[i, 0, :T], rec_actions[i, 0, :T]], axis=1)
                     current = rec_observations[i, 0, :T]
+                    current_policy = rec_observations_policy[i, 0, :T]
                     cur_base_actions = rec_actions[i, 0, :T]
                     temp_timesteps = torch.arange(T, dtype=torch.float32, device=args_cli.device).unsqueeze(1)
-                    padded_current = torch.cat([current, cur_base_actions, temp_timesteps], dim=-1)
+                    padded_current = torch.cat([current, cur_base_actions, temp_timesteps, current_policy], dim=-1)
                     residual_actions = correction_model.get_action(
                         context.repeat(T, 1, 1),
                         padded_current,
@@ -513,6 +516,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     replay_buffer['index'] += T.item()
 
                     rec_observations[i] *= 0
+                    rec_observations_policy[i] *= 0
                     rec_actions[i] *= 0
                     rec_rewards[i] *= 0
                     timesteps[i] *= 0
@@ -555,7 +559,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         fake_context = torch.zeros(batch_size, args_cli.horizon, RESIDUAL_CONTEXT_DIM, dtype=torch.float32, device=args_cli.device)
                         fake_padding_mask = torch.zeros(batch_size, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
                         fake_base_actions = torch.zeros(batch_size, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
-                        batch_current = torch.cat([batch_current, torch.zeros(batch_size, 8, dtype=torch.float32, device=args_cli.device)], dim=-1)
+                        batch_current = torch.cat([batch_current, torch.zeros(batch_size, 7 + 1 + 225, dtype=torch.float32, device=args_cli.device)], dim=-1)
 
                         optimizer.zero_grad()
                         loss, info = base_policy.loss(fake_context, batch_current, fake_base_actions, batch_label, fake_padding_mask)

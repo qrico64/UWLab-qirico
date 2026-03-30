@@ -421,6 +421,13 @@ class ObservationsCfg:
             self.history_length = 1
 
     @configclass
+    class PolicyCfg3(PolicyCfg2):
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = False
+            self.history_length = 1
+
+    @configclass
     class PolicyCfg_AAAAAA(ObsGroup):
         insertive_asset_pose = ObsTerm(
             func=task_mdp.target_asset_pose_in_root_asset_frame,
@@ -574,6 +581,7 @@ class ObservationsCfg:
     critic: CriticCfg = CriticCfg()
     policy2: PolicyCfg2 = PolicyCfg2()
     policy_aaaaaa: PolicyCfg_AAAAAA = PolicyCfg_AAAAAA()
+    # policy3: PolicyCfg3 = PolicyCfg3()
     # rgb: RGBCfg = RGBCfg()
 
 

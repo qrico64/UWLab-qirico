@@ -253,7 +253,7 @@ def evaluate_model_raw(
             with torch.no_grad():
                 return base_policy_raw.get_action(
                     torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['context_dim'], device=device),
-                    torch.cat([obs_input_dict['policy2'], torch.zeros(len(obs_input_dict), 8, device=device)], dim=-1),
+                    torch.cat([obs_input_dict['policy2'], torch.zeros(len(obs_input_dict), 7 + 1 + 225, device=device)], dim=-1),
                     torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['label_dim'], device=device),
                     padding_mask=torch.zeros(len(obs_input_dict), T_DIM, dtype=torch.bool, device=device),
                 )
@@ -315,6 +315,7 @@ def evaluate_model_raw(
     timesteps = torch.zeros(N, N_DIM, dtype=torch.int64, device=device)
     successes = torch.zeros(N, N_DIM, dtype=torch.bool, device=device)
     rec_observations = torch.zeros(N, N_DIM, T_DIM, S_DIM, dtype=torch.float32, device=device)
+    rec_observations_policy = torch.zeros(N, N_DIM, T_DIM, 225, dtype=torch.float32, device=device)
     rec_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
     rec_rewards = torch.zeros(N, N_DIM, T_DIM, dtype=torch.float32, device=device)
     rec_expert_actions = torch.zeros(N, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=device)
@@ -386,7 +387,8 @@ def evaluate_model_raw(
                 padding_mask = torch.arange(T_DIM, device=device).repeat(need_residuals_count, 1) >= timesteps[need_residuals, 0].unsqueeze(1)
                 cur_base_actions = base_actions[need_residuals].clone()
                 temp_timesteps = timesteps[need_residuals, 0:1].to(dtype=torch.float32)
-                currents = torch.cat([currents, cur_base_actions, temp_timesteps], dim=-1)
+                currents_policy = obs['policy'][need_residuals].clone()
+                currents = torch.cat([currents, cur_base_actions, temp_timesteps, currents_policy], dim=-1)
                 
                 if correction_model_info["force_mu_conditioning"] == "none":
                     mu_conditioning = None
@@ -404,6 +406,7 @@ def evaluate_model_raw(
             indices = torch.arange(N, device=device)
             cur_timesteps = timesteps[indices, curstates]
             rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
+            rec_observations_policy[indices, curstates, cur_timesteps, :] = obs['policy']
             rec_actions[indices, curstates, cur_timesteps, :] = base_actions
             rec_expert_actions[indices, curstates, cur_timesteps, :] = expert_actions
             rec_rewards[indices, curstates, cur_timesteps] = reward
@@ -440,6 +443,7 @@ def evaluate_model_raw(
                 if not completed_reset[i]:
                     completed_reset[i] = True
                     rec_observations[i] *= 0
+                    rec_observations_policy[i] *= 0
                     rec_actions[i] *= 0
                     rec_expert_actions[i] *= 0
                     rec_rewards[i] *= 0
@@ -495,6 +499,7 @@ def evaluate_model_raw(
                         print()
 
                     rec_observations[i] *= 0
+                    rec_observations_policy[i] *= 0
                     rec_actions[i] *= 0
                     rec_expert_actions[i] *= 0
                     rec_rewards[i] *= 0
@@ -511,9 +516,10 @@ def evaluate_model_raw(
                     if T > 0:
                         context = torch.cat([rec_observations[i, 0], rec_actions[i, 0]], dim=1).repeat(T, 1, 1)
                         current = rec_observations[i, 0, :T]
+                        current_policy = rec_observations_policy[i, 0, :T]
                         cur_base_actions = rec_actions[i, 0, :T]
                         temp_timesteps = torch.arange(T, dtype=torch.float32, device=device).unsqueeze(1)
-                        current = torch.cat([current, cur_base_actions, temp_timesteps], dim=-1)
+                        current = torch.cat([current, cur_base_actions, temp_timesteps, current_policy], dim=-1)
                         padding_mask = torch.arange(T_DIM, device=device).repeat(T, 1) >= T
                 
                         if correction_model_info["force_mu_conditioning"] == "none":

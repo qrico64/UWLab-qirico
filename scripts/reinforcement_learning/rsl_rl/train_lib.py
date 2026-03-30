@@ -67,7 +67,7 @@ class RobotTransformerPolicy(nn.Module):
             combined_head_arch: str = "none", # Options: "none", "linear", "2layer".
             combined_emb_size: int = 512,
             combined_kl_factor: float = 0.0,
-            state_type: str = "standard", # Options: "standard", "noprevaction", "eeposition", "perfectmu"
+            state_type: str = "standard",
             force_mu_conditioning: str = "obsnoise", # Options: "none", "obsnoise".
             force_mu_conditioning_size: int = 2,
         ):
@@ -243,7 +243,7 @@ class RobotTransformerPolicy(nn.Module):
     
     def process_current(self, current):
         if self.policy_cfg["state_type"] not in ["perfectmu"]:
-            assert current.shape[-1] == 45 + 7 + 1
+            assert current.shape[-1] == 45 + 7 + 1 + 225
         if self.policy_cfg["state_type"] == "standard":
             return current[:, :45]
         elif self.policy_cfg["state_type"] == "noprevaction":
@@ -260,6 +260,17 @@ class RobotTransformerPolicy(nn.Module):
             return torch.cat([current[:, 52:53]], dim=-1)
         elif self.policy_cfg["state_type"] == "state_timestep":
             return torch.cat([current[:, :45], current[:, 52:53]], dim=-1)
+        elif self.policy_cfg["state_type"] == "history5":
+            return current[:, 53:278]
+        elif self.policy_cfg["state_type"] == "history3":
+            return torch.cat([
+                current[:, 53 + 12 : 53 + 30], # 18
+                current[:, 53 + 44 : 53 + 65], # 21
+                current[:, 53 + 93 : 53 + 135], # 42
+                current[:, 53 + 147 : 53 + 165], # 18
+                current[:, 53 + 177 : 53 + 195], # 18
+                current[:, 53 + 207 : 53 + 225], # 18
+            ], dim=-1)
         else:
             raise NotImplementedError(f"Unknown state_type: {self.policy_cfg['state_type']}")
 
@@ -499,9 +510,10 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "force_mu_conditioning": "none",
             "force_mu_conditioning_size": 2,
         } | save_dict
-        if save_dict['current_means'].shape[0] < 53:
-            save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((53 - save_dict['current_means'].shape[0],))], axis=0)
-            save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((53 - save_dict['current_stds'].shape[0],))], axis=0)
+        REQUIRED_LENGTH = 45 + 7 + 1 + 225
+        if save_dict['current_means'].shape[0] < REQUIRED_LENGTH:
+            save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((REQUIRED_LENGTH - save_dict['current_means'].shape[0],))], axis=0)
+            save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((REQUIRED_LENGTH - save_dict['current_stds'].shape[0],))], axis=0)
         save_dict = {
             "state_type": "standard",
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
