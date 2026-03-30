@@ -1,7 +1,7 @@
 #!/bin/bash -l
-#SBATCH --job-name=d_po1s1        # Job name
-#SBATCH --output=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar28/peg_recxgeq05_o001s1r2/log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar28/peg_recxgeq05_o001s1r2/log/%j_%x_err.txt         # Error file
+#SBATCH --job-name=d_ps2r0        # Job name
+#SBATCH --output=/gscratch/scrubbed/qirico/Meta-Learning-25-10-1/collected_data/mar30/peg_recxgeq05_o0015s2r0/log/%j_%x_out.txt        # Output file (%j = job ID)
+#SBATCH --error=/gscratch/scrubbed/qirico/Meta-Learning-25-10-1/collected_data/mar30/peg_recxgeq05_o0015s2r0/log/%j_%x_err.txt         # Error file
 #SBATCH --time=12:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
@@ -24,7 +24,9 @@ echo
 echo
 
 # Run your program
-export SAVE_PATH=/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar27/peg_recxgeq05_o001s2r2/
+export SAVE_PATH_FRONT=mar30/peg_recxgeq05_o0015s2r0
+export SAVE_PATH=/gscratch/scrubbed/qirico/Meta-Learning-25-10-1/collected_data/$SAVE_PATH_FRONT
+export SAVE_PATH_COPY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/collected_data/$SAVE_PATH_FRONT
 mkdir -p $SAVE_PATH
 cp c.slurm $SAVE_PATH/
 cp scripts/reinforcement_learning/rsl_rl/play2.py $SAVE_PATH/
@@ -66,11 +68,23 @@ apptainer exec --nv \
   --headless \
   --num_envs 1000 \
   --use_general_scales \
-  --sys_noise_scale 1.0 \
-  --rand_noise_scale 2.0 \
+  --sys_noise_scale 2.0 \
+  --rand_noise_scale 0.0 \
   --num_trajectories 100000 \
-  --obs_receptive_noise_scale 0.01 \
+  --obs_receptive_noise_scale 0.015 \
   --obs_insertive_noise_scale 0.0 \
   --record_path $SAVE_PATH \
   --reset_mode recxgeq05 \
 '
+
+# Create destination and sync data
+mkdir -p "$SAVE_PATH_COPY"
+# rsync is safer than cp for large data collection
+rsync -a "$SAVE_PATH/" "$SAVE_PATH_COPY/"
+
+# Cleanup temporary directory
+if [ -d "$JOBTMP" ]; then
+    rm -rf "$JOBTMP"
+fi
+
+echo "Job finished and data synced to $SAVE_PATH_COPY"
