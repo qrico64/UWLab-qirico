@@ -423,7 +423,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     replay_buffer = {
         'index': 0,
-        'current': torch.zeros(args_cli.num_evals * T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device='cpu'),
+        'current': torch.zeros(args_cli.num_evals * T_DIM, RESIDUAL_S_DIM + 7 + 1 + 225, dtype=torch.float32, device='cpu'),
         'label': torch.zeros(args_cli.num_evals * T_DIM, A_DIM, dtype=torch.float32, device='cpu'),
     }
     BATCH_SIZE = 64
@@ -468,7 +468,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                 fake_context = torch.zeros(env.num_envs, args_cli.horizon, base_policy_info['context_dim'], dtype=torch.float32, device=args_cli.device)
                 fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
-                currents = torch.cat([obs['policy2'], torch.zeros(env.num_envs, 7 + 1 + 225, dtype=torch.float32, device=args_cli.device)], dim=-1)
+                currents = torch.cat([obs['policy2'], torch.zeros(env.num_envs, 7 + 1, dtype=torch.float32, device=args_cli.device), obs['policy']], dim=-1)
                 currents = (currents - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
                 fake_base_actions = torch.zeros(env.num_envs, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
                 base_actions = base_policy.get_action(fake_context, currents, fake_base_actions, padding_mask=fake_padding_mask)
@@ -508,7 +508,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         cur_base_actions,
                     )
 
-                    stored_currents = (current - base_policy_info['current_means_tensor'][:45]) / base_policy_info['current_stds_tensor'][:45]
+                    stored_currents = torch.cat([current, torch.zeros(T, 7, dtype=torch.float32, device=args_cli.device), temp_timesteps, current_policy], dim=-1)
+                    stored_currents = (stored_currents - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
                     labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else residual_actions
                     stored_labels = (labels - base_policy_info['label_means_tensor']) / base_policy_info['label_stds_tensor']
                     replay_buffer['current'][replay_buffer['index']:replay_buffer['index'] + T] = stored_currents.cpu()
@@ -559,7 +560,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         fake_context = torch.zeros(batch_size, args_cli.horizon, RESIDUAL_CONTEXT_DIM, dtype=torch.float32, device=args_cli.device)
                         fake_padding_mask = torch.zeros(batch_size, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
                         fake_base_actions = torch.zeros(batch_size, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
-                        batch_current = torch.cat([batch_current, torch.zeros(batch_size, 7 + 1 + 225, dtype=torch.float32, device=args_cli.device)], dim=-1)
 
                         optimizer.zero_grad()
                         loss, info = base_policy.loss(fake_context, batch_current, fake_base_actions, batch_label, fake_padding_mask)
