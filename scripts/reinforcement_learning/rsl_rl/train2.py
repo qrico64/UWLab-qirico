@@ -590,6 +590,8 @@ def main():
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar10/drawer_y4_id_obs001_r2/cut-trajectories.pkl": "drawer_o001_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar9/y4_id_rand2_/cut-trajectories.pkl": "peg_y4_o001_ds",
         "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar11/peg_r4_id/cut-trajectories.pkl": "peg_r4_exp_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar5/obs001r2_dataset_recxgeq05/job-True-0.0-2.0-100000-60--0.01-0.0/cut-trajectories.pkl": "o001r2_ds",
+        "/mmfs1/gscratch/stf/qirico/All/All-Weird/A/Meta-Learning-25-10-1/collected_data/mar27/peg_recxgeq05_s4r2/cut-trajectories.pkl": "s4r2_ds",
     }
 
     datasets = []

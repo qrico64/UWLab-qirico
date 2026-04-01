@@ -31,6 +31,17 @@ echo $EVAL_RESET_MODE
 echo $BASE_POLICY
 echo $CORRECTION_MODEL
 
+# Set horizon based on OUR_TASK
+if [ "$OUR_TASK" == "peg" ]; then
+    HORIZON=60
+elif [ "$OUR_TASK" == "drawer" ]; then
+    HORIZON=110
+elif [ "$OUR_TASK" == "leg" ]; then
+    HORIZON=200
+else
+    HORIZON=60 # Default fallback
+fi
+
 export UW_BASE=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/docker
 
 export APPTAINERENV_ISAACSIM_PATH=/isaac-sim/
@@ -54,6 +65,7 @@ apptainer exec --nv \
   --env EVAL_RESET_MODE="$EVAL_RESET_MODE" \
   --env BASE_POLICY="$BASE_POLICY" \
   --env CORRECTION_MODEL="$CORRECTION_MODEL" \
+  --env HORIZON="$HORIZON" \
   --bind /mmfs1/gscratch/stf/:/mmfs1/gscratch/stf/ \
   --bind /gscratch/scrubbed/qirico/:/gscratch/scrubbed/qirico/ \
   --bind /etc/pki:/etc/pki \
@@ -82,4 +94,5 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --correction_model $CORRECTION_MODEL \
   --reset_mode $EVAL_RESET_MODE \
   --eval_mode $EVAL_MODE \
+  --horizon $HORIZON \
 '

@@ -30,7 +30,7 @@ class PegExpert(nn.Module):
             nn.Linear(64, 7),
         )
 
-        critic_in_dim = {"peg": 216, "drawer": 219, "leg": 216}[our_task]
+        critic_in_dim = {"peg": 216, "drawer": 219, "leg": 243}[our_task]
         self.critic = nn.Sequential(
             nn.Linear(critic_in_dim, 512),
             nn.ELU(),

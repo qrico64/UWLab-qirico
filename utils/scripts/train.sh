@@ -34,18 +34,18 @@ train_job_id=$(
 echo "Submitted train job: $train_job_id"
 ALL_IDS="$train_job_id"
 
-if [ "$OUR_TASK" = "peg" ]; then
-  export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
-  export BASE_POLICY2=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt
-elif [ "$OUR_TASK" = "drawer" ]; then
-  export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar10/expert_drawer_y4_id/500-ckpt.pt
-else
-  echo "Unknown OUR_TASK=$OUR_TASK" >&2
-  exit 1
-fi
-
 export CORRECTION_MODEL="${SAVE_PATH}/${EPOCHS}-ckpt.pt"
 if [ "$IS_EXPERT" = "0" ]; then
+  if [ "$OUR_TASK" = "peg" ]; then
+    export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
+    export BASE_POLICY2=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb8/expert-ds_random5-receptive_x_geq_05-5layers_x4_relu/300-ckpt.pt
+  elif [ "$OUR_TASK" = "drawer" ]; then
+    export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar10/expert_drawer_y4_id/500-ckpt.pt
+  else
+    echo "Unknown OUR_TASK=$OUR_TASK" >&2
+    exit 1
+  fi
+
   eval_job_id=$(
     sbatch --parsable \
       --job-name="e1$RUN_NAME" \
