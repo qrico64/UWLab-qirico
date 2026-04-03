@@ -13,6 +13,7 @@ import argparse
 import matplotlib.pyplot as plt
 import cur_utils
 import pathlib
+import expert_utils
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -487,18 +488,41 @@ class RobotTransformerPolicy(nn.Module):
 
 
 class ProcessedRobotTransformerPolicy(nn.Module):
-    def __init__(self, save_path: str | pathlib.Path, device: str = "cpu"):
+    def __init__(self, save_path: str | pathlib.Path, device: str = "cpu", our_task: str = "peg"):
         super().__init__()
         self.device = torch.device(device)
+        self.save_path = str(save_path)
 
-        save_path = str(save_path)
+        if self.save_path == "expert":
+            # Load the RL Expert
+            self.model, _ = expert_utils.load_expert_by_task(our_task, device=device)
+            
+            # Compatibility save_dict
+            self.save_dict = {
+                "context_dim": 1,
+                "current_dim": 225,
+                "label_dim": 7,
+                "infer_mode": "expert",
+                "state_type": "expert_raw",
+            }
+            
+            # Register identity buffers as the expert handles its own internal normalization
+            self.register_buffer("context_means", torch.zeros((1, 1, 1), device=self.device))
+            self.register_buffer("context_stds",  torch.ones((1, 1, 1), device=self.device))
+            self.register_buffer("current_means", torch.zeros((1, 45 + 7 + 1 + 225), device=self.device))
+            self.register_buffer("current_stds",  torch.ones((1, 45 + 7 + 1 + 225), device=self.device))
+            self.register_buffer("label_means",   torch.zeros((1, 7), device=self.device))
+            self.register_buffer("label_stds",    torch.ones((1, 7), device=self.device))
+            
+            self.to(self.device).eval()
+            return # Exit early for expert policies
 
-        # load info
+        # --- Standard Transformer Loading Logic ---
+        save_path = self.save_path
         info_path = os.path.join(os.path.dirname(save_path), "info.pkl")
         with open(info_path, "rb") as fi:
             save_dict = pickle.load(fi)
 
-        # same default/override behavior as your loader
         save_dict = {
             "current_means": np.zeros((save_dict["current_dim"],)),
             "current_stds": np.ones((save_dict["current_dim"],)),
@@ -525,10 +549,12 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "force_mu_conditioning_size": 2,
             "act_head": "relu",
         } | save_dict
+
         REQUIRED_LENGTH = 45 + 7 + 1 + 225
         if save_dict['current_means'].shape[0] < REQUIRED_LENGTH:
             save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((REQUIRED_LENGTH - save_dict['current_means'].shape[0],))], axis=0)
             save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((REQUIRED_LENGTH - save_dict['current_stds'].shape[0],))], axis=0)
+        
         save_dict = {
             "state_type": "standard",
             "infer_mode": "res_scale_shift" if "scale" in save_path else ("expert" if save_dict["train_expert"] else "residual"),
@@ -536,41 +562,26 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         } | save_dict
         self.save_dict = save_dict
 
-        # build model
         self.model = RobotTransformerPolicy(
-            save_dict["context_dim"],
-            save_dict["current_dim"],
-            save_dict["label_dim"],
-            num_layers=save_dict["num_layers"],
-            d_model=save_dict["d_model"],
-            dropout=save_dict["dropout"],
-            head_arch_version=save_dict["head_arch_version"],
-            num_head_layers=save_dict["num_head_layers"],
-            d_model_head=save_dict["d_model_head"],
-            infer_mode=save_dict["infer_mode"],
-            dropout_head=save_dict["dropout_head"],
-            act_head=save_dict["act_head"],
-            mu_head_arch=save_dict["mu_head_arch"],
-            mu_size=save_dict["mu_size"],
-            mu_kl_factor=save_dict["mu_kl_factor"],
-            current_norm=save_dict["current_norm"],
-            current_head_arch=save_dict["current_head_arch"],
-            current_emb_size=save_dict["current_emb_size"],
-            current_kl_factor=save_dict["current_kl_factor"],
-            combined_head_arch=save_dict["combined_head_arch"],
-            combined_emb_size=save_dict["combined_emb_size"],
-            combined_kl_factor=save_dict["combined_kl_factor"],
-            state_type=save_dict["state_type"],
+            save_dict["context_dim"], save_dict["current_dim"], save_dict["label_dim"],
+            num_layers=save_dict["num_layers"], d_model=save_dict["d_model"],
+            dropout=save_dict["dropout"], head_arch_version=save_dict["head_arch_version"],
+            num_head_layers=save_dict["num_head_layers"], d_model_head=save_dict["d_model_head"],
+            infer_mode=save_dict["infer_mode"], dropout_head=save_dict["dropout_head"],
+            act_head=save_dict["act_head"], mu_head_arch=save_dict["mu_head_arch"],
+            mu_size=save_dict["mu_size"], mu_kl_factor=save_dict["mu_kl_factor"],
+            current_norm=save_dict["current_norm"], current_head_arch=save_dict["current_head_arch"],
+            current_emb_size=save_dict["current_emb_size"], current_kl_factor=save_dict["current_kl_factor"],
+            combined_head_arch=save_dict["combined_head_arch"], combined_emb_size=save_dict["combined_emb_size"],
+            combined_kl_factor=save_dict["combined_kl_factor"], state_type=save_dict["state_type"],
             force_mu_conditioning=save_dict["force_mu_conditioning"],
             force_mu_conditioning_size=save_dict["force_mu_conditioning_size"],
         )
 
-        # load weights
         state = torch.load(save_path, map_location=self.device)
         self.model.load_state_dict(state)
         self.model.to(self.device)
 
-        # register normalization tensors using save_dict names
         def reg(name, arr, shape):
             t = torch.as_tensor(arr, device=self.device, dtype=torch.float32).view(*shape)
             self.register_buffer(name, t)
@@ -597,21 +608,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
 
     @torch.no_grad()
     def forward(self, context, current, base_actions, padding_mask=None):
-        context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
-        current = torch.as_tensor(current, device=self.device, dtype=torch.float32)
-        base_actions = torch.as_tensor(base_actions, device=self.device, dtype=torch.float32)
-
-        eps = 1e-8
-        context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
-        current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
-        if self.save_dict["infer_mode"] == "res_scale_shift":
-            base_actions = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
-        else:
-            base_actions = base_actions / self.label_stds.clamp_min(eps)
-
-        out_n = self.model(context_n, current_n, base_actions, padding_mask=padding_mask)
-        out = out_n * self.label_stds + self.label_means
-        return out
+        return self.get_action(context, current, base_actions, padding_mask=padding_mask)
     
     def get_action(self, context, current, base_actions, padding_mask=None, mu_conditioning=None):
         context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
@@ -622,17 +619,47 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
         current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
         if self.save_dict["infer_mode"] == "res_scale_shift":
-            base_actions = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
+            base_actions_n = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
         else:
-            base_actions = base_actions / self.label_stds.clamp_min(eps)
+            base_actions_n = base_actions / self.label_stds.clamp_min(eps)
 
-        out_n = self.model.get_action(context_n, current_n, base_actions, padding_mask=padding_mask, mu_conditioning=mu_conditioning)
+        if self.save_path == "expert":
+            # Extract RL obs from the end of the state vector
+            expert_obs = current_n[:, -225:]
+            out_n = self.model(expert_obs)
+        else:
+            out_n = self.model.get_action(context_n, current_n, base_actions_n, padding_mask=padding_mask, mu_conditioning=mu_conditioning)
+        
         out = out_n * self.label_stds + self.label_means
         return out
 
+    def loss(self, context, current, base_actions, expert_actions, padding_mask=None, target_mu=None, mu_conditioning=None):
+        context = torch.as_tensor(context, device=self.device, dtype=torch.float32)
+        current = torch.as_tensor(current, device=self.device, dtype=torch.float32)
+        base_actions = torch.as_tensor(base_actions, device=self.device, dtype=torch.float32)
+        expert_actions = torch.as_tensor(expert_actions, device=self.device, dtype=torch.float32)
 
-def load_robot_policy(save_path: str | pathlib.Path, device="cpu"):
-    model = ProcessedRobotTransformerPolicy(save_path, device=device)
+        eps = 1e-8
+        context_n = (context - self.context_means) / self.context_stds.clamp_min(eps)
+        current_n = (current - self.current_means) / self.current_stds.clamp_min(eps)
+        if self.save_dict["infer_mode"] == "res_scale_shift":
+            base_actions_n = (base_actions - self.label_means) / self.label_stds.clamp_min(eps)
+        else:
+            base_actions_n = base_actions / self.label_stds.clamp_min(eps)
+        
+        expert_actions_n = (expert_actions - self.label_means) / self.label_stds.clamp_min(eps)
+
+        if self.save_path == "expert":
+            expert_obs = current_n[:, -225:]
+            new_actions = self.model(expert_obs)
+            loss_mse = F.mse_loss(new_actions, expert_actions_n, reduction="none").mean(dim=-1)
+            return loss_mse.mean(), {"loss_mse": loss_mse.detach().cpu().numpy(), "loss": loss_mse.item()}
+
+        return self.model.loss(context_n, current_n, base_actions_n, expert_actions_n, padding_mask=padding_mask, target_mu=target_mu, mu_conditioning=mu_conditioning)
+
+
+def load_robot_policy(save_path: str | pathlib.Path, device="cpu", our_task="peg"):
+    model = ProcessedRobotTransformerPolicy(save_path, device=device, our_task=our_task)
     model.eval()
     return model, model.save_dict
 

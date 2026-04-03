@@ -248,3 +248,14 @@ def save_info_dict(info: dict, filename: str | pathlib.Path):
             fi.write(f"{k}: {v}\n")
     print(f"Saved info to {filepath}")
 
+
+def get_policy_history(obs_policy: torch.Tensor, H: int) -> torch.Tensor:
+    return torch.cat([
+        obs_policy[:, 30 - 6 * H : 30], # 18
+        obs_policy[:, 65 - 7 * H : 65], # 21
+        obs_policy[:, 135 - 14 * H : 135], # 42
+        obs_policy[:, 165 - 6 * H : 165], # 18
+        obs_policy[:, 195 - 6 * H : 195], # 18
+        obs_policy[:, 225 - 6 * H : 225], # 18
+    ], dim=-1)
+

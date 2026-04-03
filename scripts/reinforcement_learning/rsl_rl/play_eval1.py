@@ -249,7 +249,7 @@ def evaluate_model_raw(
     BASE_POLICY_FILE = pathlib.Path(base_policy_file) if base_policy_file is not None else None
     if BASE_POLICY_FILE is not None:
         base_policy_raw, base_policy_info = load_robot_policy(BASE_POLICY_FILE, device=device)
-        assert base_policy_info['train_expert']
+        assert base_policy_info['infer_mode'] == "expert" or base_policy_info['infer_mode'] == "expert_new"
         def base_policy(obs_input_dict):
             with torch.no_grad():
                 return base_policy_raw.get_action(
@@ -378,13 +378,7 @@ def evaluate_model_raw(
         with torch.inference_mode():
             expert_actions = expert_policy(obs)
 
-            obs_tweaked = obs.clone()
-            receptive_noise = obs_receptive_noise
-            insertive_noise = obs_insertive_noise
-            receptive_state = obs_tweaked['policy_aaaaaa']['receptive_asset_pose'].reshape(N, 5, 6) + receptive_noise.unsqueeze(1)
-            insertive_state = obs_tweaked['policy_aaaaaa']['insertive_asset_pose'].reshape(N, 5, 6) + insertive_noise.unsqueeze(1)
-            obs_tweaked['policy'][:, :30] = cur_utils.predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)
-            obs_tweaked['policy'][:, -30:] = receptive_state.reshape(N, 30)
+            obs_tweaked = cur_utils.apply_obs_noise(obs, receptive_noise=obs_receptive_noise, insertive_noise=obs_insertive_noise)
 
             base_actions_raw = base_policy(obs_tweaked)
 
