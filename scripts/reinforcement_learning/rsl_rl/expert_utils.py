@@ -14,7 +14,7 @@ class EmpiricalNormalization(nn.Module):
         return (x - self._mean) / (self._std + 0.01)
 
 
-class PegExpert(nn.Module):
+class PpoExpert(nn.Module):
     def __init__(self, our_task="peg"):
         super().__init__()
 
@@ -57,7 +57,7 @@ class PegExpert(nn.Module):
 
 def load_expert_by_path(path, device="cpu", our_task="peg"):
     ckpt = torch.load(path, map_location=device)
-    model = PegExpert(our_task=our_task).to(device)
+    model = PpoExpert(our_task=our_task).to(device)
 
     missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=True)
 

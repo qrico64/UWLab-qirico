@@ -47,6 +47,7 @@ parser.add_argument("--finetune_arch", type=str, default="lora", help="Options: 
 parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate for finetuning.")
 parser.add_argument("--reset_mode", type=str, default='none', help="Options: none, xleq035, recxgeq05.")
 parser.add_argument("--our_task", choices=["drawer", "leg", "peg"], default=None)
+parser.add_argument("--sim_device", type=str, default="cuda:0", help="Device to run the simulation on.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -119,6 +120,7 @@ from uwlab_tasks.utils.hydra import hydra_task_config
 import train_lib
 import cur_utils
 import train_lora_lib
+import expert_utils
 
 ENABLE_WANDB = False
 
@@ -246,7 +248,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    env_cfg.sim.device = args_cli.sim_device
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -338,6 +340,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device)
     assert base_policy_info['infer_mode'] == "expert" or base_policy_info['infer_mode'] == "expert_new"
     base_policy = base_policy.model
+    for k in ["current_means", "current_stds", "context_means", "context_stds", "label_means", "label_stds"]:
+        base_policy_info[k + "_tensor"] = torch.tensor(base_policy_info[k], dtype=torch.float32, device=args_cli.device)
+    CURRENT_DIM = 45 + 7 + 1 + 225
+    OBS_RECEPTIVE_NOISE_SCALE = 0.0
+    OBS_INSERTIVE_NOISE_SCALE = 0.0
+    SYS_NOISE_SCALE = 0.0
+    
     if args_cli.finetune_arch == "lora":
         report = train_lora_lib.verify_lora_conversion_from_model(base_policy)
         print(report)
@@ -353,9 +362,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(base_policy)
     print("****** End Base Policy Architecture ******")
 
-    for k in ["current_means", "current_stds", "context_means", "context_stds", "label_means", "label_stds"]:
-        base_policy_info[k + "_tensor"] = torch.tensor(base_policy_info[k], dtype=torch.float32, device=args_cli.device)
-    
     # Correction model stuff
 
     RESIDUAL_S_DIM = env.observation_space['policy2'].shape[-1]
@@ -373,31 +379,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     successes = torch.zeros(env.num_envs, N_DIM, dtype=torch.bool, device=args_cli.device)
     rec_observations = torch.zeros(env.num_envs, N_DIM, T_DIM, RESIDUAL_S_DIM, dtype=torch.float32, device=args_cli.device)
     rec_observations_policy = torch.zeros(env.num_envs, N_DIM, T_DIM, 225, dtype=torch.float32, device=args_cli.device)
+    rec_currents = torch.zeros(env.num_envs, N_DIM, T_DIM, CURRENT_DIM, dtype=torch.float32, device=args_cli.device)
     rec_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
     rec_rewards = torch.zeros(env.num_envs, N_DIM, T_DIM, dtype=torch.float32, device=args_cli.device)
     curstates = torch.zeros(env.num_envs, dtype=torch.int64, device=args_cli.device)
     trajectory_start_position = get_starting_position(env)
     rec_expert_actions = torch.zeros(env.num_envs, N_DIM, T_DIM, A_DIM, dtype=torch.float32, device=args_cli.device)
 
-    result_success_distribution = []
-    
     obs = env.get_observations()
 
-    if correction_model_info['obs_receptive_noise_scale'] != 0 or correction_model_info['obs_insertive_noise_scale'] != 0:
+    if OBS_RECEPTIVE_NOISE_SCALE != 0 or OBS_INSERTIVE_NOISE_SCALE != 0:
         assert 'policy_aaaaaa' in obs.keys()
-    if correction_model_info['obs_insertive_noise_scale'] != 0:
+    if OBS_INSERTIVE_NOISE_SCALE != 0:
         raise Exception("Right now doesn't support insertive noise!!")
 
     if correction_model_info['use_noise_scales']:
         general_noise_scales = torch.tensor([[2.9608822, 4.3582673, 2.5497098, 8.63183, 8.950732, 2.6481836, 5.6350408]], dtype=torch.float32, device=args_cli.device) / 5
     else:
         general_noise_scales = torch.ones(1, 7, dtype=torch.float32, device=args_cli.device)
-    sys_noises = torch.randn(env.num_envs, A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
-    print(f"Using systematic noise of {correction_model_info['sys_noise_scale']}")
-    obs_receptive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
-    print(f"Using obs_receptive_noise of {correction_model_info['obs_receptive_noise_scale']}")
-    obs_insertive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
-    print(f"Using obs_insertive_noise of {correction_model_info['obs_insertive_noise_scale']}")
+    sys_noises = torch.randn(env.num_envs, A_DIM, device=args_cli.device) * SYS_NOISE_SCALE * general_noise_scales
+    print(f"Using systematic noise of {SYS_NOISE_SCALE}")
+    obs_receptive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * OBS_RECEPTIVE_NOISE_SCALE, torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
+    print(f"Using obs_receptive_noise of {OBS_RECEPTIVE_NOISE_SCALE}")
+    obs_insertive_noise = torch.cat([torch.randn(env.num_envs, 2, device=args_cli.device) * OBS_INSERTIVE_NOISE_SCALE, torch.zeros(env.num_envs, 4, device=args_cli.device)], dim=-1)
+    print(f"Using obs_insertive_noise of {OBS_INSERTIVE_NOISE_SCALE}")
 
     if args_cli.enable_cameras:
         PLOT_RESIDUAL = args_cli.plot_residual
@@ -423,7 +428,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     replay_buffer = {
         'index': 0,
-        'current': torch.zeros(args_cli.num_evals * T_DIM, RESIDUAL_S_DIM + 7 + 1 + 225, dtype=torch.float32, device='cpu'),
+        'current': torch.zeros(args_cli.num_evals * T_DIM, CURRENT_DIM, dtype=torch.float32, device='cpu'),
         'label': torch.zeros(args_cli.num_evals * T_DIM, A_DIM, dtype=torch.float32, device='cpu'),
     }
     BATCH_SIZE = 64
@@ -466,6 +471,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             with torch.inference_mode():
                 expert_action = expert_policy(obs)
 
+                obs_tweaked = cur_utils.apply_obs_noise(obs, receptive_noise=obs_receptive_noise, insertive_noise=obs_insertive_noise)
+                obs_tweaked['policy2'] = cur_utils.get_policy_history(obs_tweaked['policy2'], H=1)
+
                 fake_context = torch.zeros(env.num_envs, args_cli.horizon, base_policy_info['context_dim'], dtype=torch.float32, device=args_cli.device)
                 fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
                 currents = torch.cat([obs['policy2'], torch.zeros(env.num_envs, 7 + 1, dtype=torch.float32, device=args_cli.device), obs['policy']], dim=-1)
@@ -482,6 +490,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 cur_timesteps = timesteps[indices, curstates]
                 rec_observations[indices, curstates, cur_timesteps, :] = obs['policy2']
                 rec_observations_policy[indices, curstates, cur_timesteps, :] = obs['policy']
+                rec_currents[indices, curstates, cur_timesteps, :] = currents
                 rec_actions[indices, curstates, cur_timesteps, :] = base_actions
                 rec_rewards[indices, curstates, cur_timesteps] = reward
                 rec_expert_actions[indices, curstates, cur_timesteps] = expert_action
@@ -508,24 +517,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         cur_base_actions,
                     )
 
-                    stored_currents = torch.cat([current, torch.zeros(T, 7, dtype=torch.float32, device=args_cli.device), temp_timesteps, current_policy], dim=-1)
-                    stored_currents = (stored_currents - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
-                    labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else residual_actions
-                    stored_labels = (labels - base_policy_info['label_means_tensor']) / base_policy_info['label_stds_tensor']
+                    stored_currents = rec_currents[i, 0, :T]
+                    stored_labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else residual_actions
+                    stored_labels = (stored_labels - base_policy_info['label_means_tensor']) / base_policy_info['label_stds_tensor']
                     replay_buffer['current'][replay_buffer['index']:replay_buffer['index'] + T] = stored_currents.cpu()
                     replay_buffer['label'][replay_buffer['index']:replay_buffer['index'] + T] = stored_labels.cpu()
                     replay_buffer['index'] += T.item()
 
                     rec_observations[i] *= 0
                     rec_observations_policy[i] *= 0
+                    rec_currents[i] *= 0
                     rec_actions[i] *= 0
                     rec_rewards[i] *= 0
                     timesteps[i] *= 0
                     successes[i] = False
                     curstates[i] *= 0
-                    sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * correction_model_info['sys_noise_scale'] * general_noise_scales
-                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_receptive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
-                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * correction_model_info['obs_insertive_noise_scale'], torch.zeros(4, device=args_cli.device)], dim=-1)
+                    sys_noises[i] = torch.randn(A_DIM, device=args_cli.device) * SYS_NOISE_SCALE * general_noise_scales
+                    obs_receptive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * OBS_RECEPTIVE_NOISE_SCALE, torch.zeros(4, device=args_cli.device)], dim=-1)
+                    obs_insertive_noise[i] = torch.cat([torch.randn(2, device=args_cli.device) * OBS_INSERTIVE_NOISE_SCALE, torch.zeros(4, device=args_cli.device)], dim=-1)
                     starting_positions[i] = get_positions(env.env.env)[i]
                     trajectory_start_position[i] = get_starting_position(env)[i]
                 
@@ -559,7 +568,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         batch_label = replay_buffer['label'][idxs].to(args_cli.device)
                         fake_context = torch.zeros(batch_size, args_cli.horizon, RESIDUAL_CONTEXT_DIM, dtype=torch.float32, device=args_cli.device)
                         fake_padding_mask = torch.zeros(batch_size, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
-                        fake_base_actions = torch.zeros(batch_size, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
+                        fake_base_actions = torch.zeros(batch_size, A_DIM, dtype=torch.float32, device=args_cli.device)
 
                         optimizer.zero_grad()
                         loss, info = base_policy.loss(fake_context, batch_current, fake_base_actions, batch_label, fake_padding_mask)

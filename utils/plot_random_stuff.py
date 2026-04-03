@@ -22,6 +22,9 @@ def main():
     # Second curve (ood)
     plt.plot(x, y2, marker="o", markersize=4, linewidth=2, label="ood")
 
+    # Horizontal baseline for PPO Expert
+    plt.axhline(y=0.970, color='black', linestyle='--', label='ppo expert')
+
     plt.xlabel("History Length")
     plt.ylabel("Success Rate")
     plt.title(TITLE)
@@ -31,7 +34,6 @@ def main():
 
     plt.savefig(OUTPUT_FILE, dpi=200)
     print(f"Plot saved to: {OUTPUT_FILE}")
-    plt.show()
 
 if __name__ == "__main__":
     main()
