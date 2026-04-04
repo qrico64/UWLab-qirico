@@ -497,22 +497,32 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             # Load the RL Expert
             self.model, _ = expert_utils.load_expert_by_task(our_task, device=device)
             
-            # Compatibility save_dict
+            # Alias head to actor so LoRA code works
+            self.head = self.model.actor
+
+            # Compatibility save_dict with identity means/stds
             self.save_dict = {
+                "overall_arch": "expert",
                 "context_dim": 1,
                 "current_dim": 225,
                 "label_dim": 7,
                 "infer_mode": "expert",
                 "state_type": "expert_raw",
+                "context_means": np.zeros((45 + 7,)),
+                "context_stds":  np.ones((45 + 7,)),
+                "current_means": np.zeros((45 + 7 + 1 + 225,)),
+                "current_stds":  np.ones((45 + 7 + 1 + 225,)),
+                "label_means":   np.zeros((7,)),
+                "label_stds":    np.ones((7,)),
             }
             
-            # Register identity buffers as the expert handles its own internal normalization
-            self.register_buffer("context_means", torch.zeros((1, 1, 1), device=self.device))
-            self.register_buffer("context_stds",  torch.ones((1, 1, 1), device=self.device))
-            self.register_buffer("current_means", torch.zeros((1, 45 + 7 + 1 + 225), device=self.device))
-            self.register_buffer("current_stds",  torch.ones((1, 45 + 7 + 1 + 225), device=self.device))
-            self.register_buffer("label_means",   torch.zeros((1, 7), device=self.device))
-            self.register_buffer("label_stds",    torch.ones((1, 7), device=self.device))
+            # Register buffers normally from save_dict
+            self.register_buffer("context_means", torch.as_tensor(self.save_dict["context_means"], device=self.device, dtype=torch.float32))
+            self.register_buffer("context_stds",  torch.as_tensor(self.save_dict["context_stds"],  device=self.device, dtype=torch.float32))
+            self.register_buffer("current_means", torch.as_tensor(self.save_dict["current_means"], device=self.device, dtype=torch.float32))
+            self.register_buffer("current_stds",  torch.as_tensor(self.save_dict["current_stds"],  device=self.device, dtype=torch.float32))
+            self.register_buffer("label_means",   torch.as_tensor(self.save_dict["label_means"],   device=self.device, dtype=torch.float32))
+            self.register_buffer("label_stds",    torch.as_tensor(self.save_dict["label_stds"],    device=self.device, dtype=torch.float32))
             
             self.to(self.device).eval()
             return # Exit early for expert policies
@@ -524,6 +534,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             save_dict = pickle.load(fi)
 
         save_dict = {
+            "overall_arch": "robot_transformer",
             "current_means": np.zeros((save_dict["current_dim"],)),
             "current_stds": np.ones((save_dict["current_dim"],)),
             "context_means": np.zeros((save_dict["context_dim"],)),
@@ -550,7 +561,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "act_head": "relu",
         } | save_dict
 
-        REQUIRED_LENGTH = 45 + 7 + 1 + 225
+        REQUIRED_LENGTH = 45 + 7 + 1 + 225 if save_dict["overall_arch"] == "robot_transformer" else 225
         if save_dict['current_means'].shape[0] < REQUIRED_LENGTH:
             save_dict["current_means"] = np.concatenate([save_dict["current_means"], np.zeros((REQUIRED_LENGTH - save_dict['current_means'].shape[0],))], axis=0)
             save_dict["current_stds"] = np.concatenate([save_dict["current_stds"], np.ones((REQUIRED_LENGTH - save_dict['current_stds'].shape[0],))], axis=0)
@@ -562,21 +573,26 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         } | save_dict
         self.save_dict = save_dict
 
-        self.model = RobotTransformerPolicy(
-            save_dict["context_dim"], save_dict["current_dim"], save_dict["label_dim"],
-            num_layers=save_dict["num_layers"], d_model=save_dict["d_model"],
-            dropout=save_dict["dropout"], head_arch_version=save_dict["head_arch_version"],
-            num_head_layers=save_dict["num_head_layers"], d_model_head=save_dict["d_model_head"],
-            infer_mode=save_dict["infer_mode"], dropout_head=save_dict["dropout_head"],
-            act_head=save_dict["act_head"], mu_head_arch=save_dict["mu_head_arch"],
-            mu_size=save_dict["mu_size"], mu_kl_factor=save_dict["mu_kl_factor"],
-            current_norm=save_dict["current_norm"], current_head_arch=save_dict["current_head_arch"],
-            current_emb_size=save_dict["current_emb_size"], current_kl_factor=save_dict["current_kl_factor"],
-            combined_head_arch=save_dict["combined_head_arch"], combined_emb_size=save_dict["combined_emb_size"],
-            combined_kl_factor=save_dict["combined_kl_factor"], state_type=save_dict["state_type"],
-            force_mu_conditioning=save_dict["force_mu_conditioning"],
-            force_mu_conditioning_size=save_dict["force_mu_conditioning_size"],
-        )
+        if save_dict["overall_arch"] == "robot_transformer":
+            self.model = RobotTransformerPolicy(
+                save_dict["context_dim"], save_dict["current_dim"], save_dict["label_dim"],
+                num_layers=save_dict["num_layers"], d_model=save_dict["d_model"],
+                dropout=save_dict["dropout"], head_arch_version=save_dict["head_arch_version"],
+                num_head_layers=save_dict["num_head_layers"], d_model_head=save_dict["d_model_head"],
+                infer_mode=save_dict["infer_mode"], dropout_head=save_dict["dropout_head"],
+                act_head=save_dict["act_head"], mu_head_arch=save_dict["mu_head_arch"],
+                mu_size=save_dict["mu_size"], mu_kl_factor=save_dict["mu_kl_factor"],
+                current_norm=save_dict["current_norm"], current_head_arch=save_dict["current_head_arch"],
+                current_emb_size=save_dict["current_emb_size"], current_kl_factor=save_dict["current_kl_factor"],
+                combined_head_arch=save_dict["combined_head_arch"], combined_emb_size=save_dict["combined_emb_size"],
+                combined_kl_factor=save_dict["combined_kl_factor"], state_type=save_dict["state_type"],
+                force_mu_conditioning=save_dict["force_mu_conditioning"],
+                force_mu_conditioning_size=save_dict["force_mu_conditioning_size"],
+            )
+            self.head = self.model.head
+        elif save_dict["overall_arch"] == "expert":
+            self.model, _ = expert_utils.load_expert_by_task(our_task, device=device)
+            self.head = self.model.actor
 
         state = torch.load(save_path, map_location=self.device)
         self.model.load_state_dict(state)
@@ -623,7 +639,7 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         else:
             base_actions_n = base_actions / self.label_stds.clamp_min(eps)
 
-        if self.save_path == "expert":
+        if self.save_dict["overall_arch"] == "expert":
             # Extract RL obs from the end of the state vector
             expert_obs = current_n[:, -225:]
             out_n = self.model(expert_obs)
@@ -649,11 +665,11 @@ class ProcessedRobotTransformerPolicy(nn.Module):
         
         expert_actions_n = (expert_actions - self.label_means) / self.label_stds.clamp_min(eps)
 
-        if self.save_path == "expert":
+        if self.save_dict["overall_arch"] == "expert":
             expert_obs = current_n[:, -225:]
             new_actions = self.model(expert_obs)
-            loss_mse = F.mse_loss(new_actions, expert_actions_n, reduction="none").mean(dim=-1)
-            return loss_mse.mean(), {"loss_mse": loss_mse.detach().cpu().numpy(), "loss": loss_mse.item()}
+            loss_mse = F.mse_loss(new_actions, expert_actions_n)
+            return loss_mse, {"loss_mse": loss_mse.detach().cpu().numpy(), "loss": loss_mse.item()}
 
         return self.model.loss(context_n, current_n, base_actions_n, expert_actions_n, padding_mask=padding_mask, target_mu=target_mu, mu_conditioning=mu_conditioning)
 

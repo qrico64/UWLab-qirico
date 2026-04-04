@@ -337,9 +337,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     
     # Rico: Instantiate base policy!!
     assert args_cli.base_policy is not None
-    base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device)
-    assert base_policy_info['infer_mode'] == "expert" or base_policy_info['infer_mode'] == "expert_new"
-    base_policy = base_policy.model
+    base_policy, base_policy_info = train_lib.load_robot_policy(args_cli.base_policy, device=args_cli.device, our_task=args_cli.our_task)
+    assert base_policy_info['infer_mode'] in ["expert", "expert_new"]
     for k in ["current_means", "current_stds", "context_means", "context_stds", "label_means", "label_stds"]:
         base_policy_info[k + "_tensor"] = torch.tensor(base_policy_info[k], dtype=torch.float32, device=args_cli.device)
     CURRENT_DIM = 45 + 7 + 1 + 225
@@ -439,7 +438,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         SAVE_DIRECTORY = pathlib.Path(SAVE_DIRECTORY)
         SAVE_DIRECTORY.mkdir(parents=True, exist_ok=True)
         # Save the base model as ckpt_0.pt
-        save_model_at_checkpoint(base_policy, str(SAVE_DIRECTORY), 0, finetuning_arch=args_cli.finetune_arch)
+        save_model_at_checkpoint(base_policy.model, str(SAVE_DIRECTORY), 0, finetuning_arch=args_cli.finetune_arch)
         cur_utils.save_info_dict(base_policy_info, SAVE_DIRECTORY / f"info.pkl")
 
     num_epochs_so_far = 0
@@ -477,10 +476,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 fake_context = torch.zeros(env.num_envs, args_cli.horizon, base_policy_info['context_dim'], dtype=torch.float32, device=args_cli.device)
                 fake_padding_mask = torch.zeros(env.num_envs, args_cli.horizon, dtype=torch.bool, device=args_cli.device)
                 currents = torch.cat([obs['policy2'], torch.zeros(env.num_envs, 7 + 1, dtype=torch.float32, device=args_cli.device), obs['policy']], dim=-1)
-                currents = (currents - base_policy_info['current_means_tensor']) / base_policy_info['current_stds_tensor']
                 fake_base_actions = torch.zeros(env.num_envs, base_policy_info['label_dim'], dtype=torch.float32, device=args_cli.device)
                 base_actions = base_policy.get_action(fake_context, currents, fake_base_actions, padding_mask=fake_padding_mask)
-                base_actions = base_actions * base_policy_info['label_stds_tensor'] + base_policy_info['label_means_tensor']
                 
                 # step
                 next_obs, reward, dones, info = env.step(base_actions)
@@ -506,11 +503,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                     T = min(timesteps[i, 0], (rec_rewards[i, 0, :timesteps[i, 0]] < SUCCESS_THRESHOLD).sum() + 1)
                     context = torch.cat([rec_observations[i, 0, :T], rec_actions[i, 0, :T]], axis=1)
-                    current = rec_observations[i, 0, :T]
                     current_policy = rec_observations_policy[i, 0, :T]
                     cur_base_actions = rec_actions[i, 0, :T]
                     temp_timesteps = torch.arange(T, dtype=torch.float32, device=args_cli.device).unsqueeze(1)
-                    padded_current = torch.cat([current, cur_base_actions, temp_timesteps, current_policy], dim=-1)
+                    padded_current = torch.cat([rec_observations[i, 0, :T], cur_base_actions, temp_timesteps, current_policy], dim=-1)
+                    
                     residual_actions = correction_model.get_action(
                         context.repeat(T, 1, 1),
                         padded_current,
@@ -519,7 +516,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
                     stored_currents = rec_currents[i, 0, :T]
                     stored_labels = rec_expert_actions[i, 0, :T] if args_cli.finetune_mode == "expert" else residual_actions
-                    stored_labels = (stored_labels - base_policy_info['label_means_tensor']) / base_policy_info['label_stds_tensor']
+                    
                     replay_buffer['current'][replay_buffer['index']:replay_buffer['index'] + T] = stored_currents.cpu()
                     replay_buffer['label'][replay_buffer['index']:replay_buffer['index'] + T] = stored_labels.cpu()
                     replay_buffer['index'] += T.item()
@@ -598,7 +595,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     base_policy.eval()
 
                     if SAVE_DIRECTORY is not None and SAVE_INTERVAL(current_traj) > SAVE_INTERVAL(num_trajs_so_far):
-                        save_model_at_checkpoint(base_policy, SAVE_DIRECTORY, current_traj, finetuning_arch=args_cli.finetune_arch)
+                        save_model_at_checkpoint(base_policy.model, SAVE_DIRECTORY, current_traj, finetuning_arch=args_cli.finetune_arch)
                         cur_utils.save_info_dict(base_policy_info, SAVE_DIRECTORY / f"info.pkl")
                     
                     num_epochs_so_far += num_epochs
