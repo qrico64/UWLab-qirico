@@ -5,5 +5,10 @@ python scripts/reinforcement_learning/rsl_rl/play_eval1.py \
     --enable_cameras \
     --horizon 60 \
     --num_envs 1 \
-    --video_path viz/test/video.mp4 \
+    --video_path viz/o1-expert/video.mp4 \
+    --base_policy none \
+    --eval_mode obsnoise001 \
+    --reset_mode xleq035 \
+    --seed 50 \
+    --plot_residual \
     --sim_device cpu \

@@ -153,8 +153,8 @@ def get_starting_position(env: ManagerBasedEnv):
 def render_frame(frame: np.ndarray, caption: str, display_action=None, display_action2=None):
     captions = caption.splitlines()
     IMAGE_SIZE = frame.shape[:2]
-    BOUNDARY_X = 5
-    BOUNDARY_Y = 5
+    BOUNDARY_X = 8
+    BOUNDARY_Y = 8
 
     if display_action is not None:
         # DRAW SECOND SCREEN #
@@ -173,6 +173,15 @@ def render_frame(frame: np.ndarray, caption: str, display_action=None, display_a
         scale_x = w / (BOUNDARY_X + BOUNDARY_X)
         scale_y = h / (BOUNDARY_Y + BOUNDARY_Y)
         
+        # Draw Ticks at multiples of 2
+        tick_size = 5
+        for i in range(-BOUNDARY_X, BOUNDARY_X + 1, 1):
+            tx = int(center[0] + i * scale_x)
+            cv2.line(second_screen, (tx, center[1] - tick_size), (tx, center[1] + tick_size), (255, 255, 255), 1)
+        for i in range(-BOUNDARY_Y, BOUNDARY_Y + 1, 1):
+            ty = int(center[1] - i * scale_y)
+            cv2.line(second_screen, (center[0] - tick_size, ty), (center[0] + tick_size, ty), (255, 255, 255), 1)
+
         # Calculate pixel position (Note: Y is inverted in screen space)
         coord = display_action[:2]
         px = int(center[0] + coord[0] * scale_x)
@@ -290,8 +299,8 @@ def evaluate_model_raw(
     OBS_INSERTIVE_NOISE_SCALE = 0.0
     if BASE_POLICY_FILE is not None:
         pass
-    elif eval_mode == 'sysnoise3':
-        SYS_NOISE_SCALE = 3.0
+    elif eval_mode == 'sysnoise4':
+        SYS_NOISE_SCALE = 4.0
     elif eval_mode == 'obsnoise001':
         OBS_RECEPTIVE_NOISE_SCALE = 0.01
     elif eval_mode == 'o1s2':
@@ -372,7 +381,7 @@ def evaluate_model_raw(
         VIDEO_PATH = video_path or str(VIZ_DIRECTORY / "video" / "videos.mp4")
         os.makedirs(os.path.dirname(VIDEO_PATH), exist_ok=True)
         videopath_generator = lambda x, y: VIDEO_PATH[:VIDEO_PATH.rfind('.')] + f"_{x}_{y}" + VIDEO_PATH[VIDEO_PATH.rfind('.'):]
-        NUM_VIDEOS = 6
+        NUM_VIDEOS = 10
         VIDEO_FPS = 6
     
     starting_positions = get_positions(env.env.env)
