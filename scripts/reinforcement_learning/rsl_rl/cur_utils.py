@@ -226,8 +226,8 @@ def apply_obs_noise2(obs_policy: torch.Tensor, obs_recpose: torch.Tensor, obs_in
         insertive_noise = torch.tensor(insertive_noise, dtype=torch.float32, device=device)
 
     obs_tweaked = obs_policy.clone()
-    receptive_state = obs_recpose.reshape(N, 5, 6) + receptive_noise.unsqueeze(1)
-    insertive_state = obs_inspose.reshape(N, 5, 6) + insertive_noise.unsqueeze(1)
+    receptive_state = obs_recpose.reshape(N, 5, 6) + receptive_noise.unsqueeze(-2)
+    insertive_state = obs_inspose.reshape(N, 5, 6) + insertive_noise.unsqueeze(-2)
     obs_tweaked[:, :30] = predict_relative_pose(insertive_state.reshape(-1, 6), receptive_state.reshape(-1, 6)).reshape(N, 30)
     obs_tweaked[:, -30:] = receptive_state.reshape(N, 30)
 

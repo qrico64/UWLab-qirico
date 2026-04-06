@@ -1102,6 +1102,8 @@ class MultiResetManager(ManagerTermBase):
                 init_indices_mask &= (all_insertive_poses[:, 0] < 0.35) & (all_receptive_poses[:, 0] < 0.35)
             elif reset_mode == "recxgeq05":
                 init_indices_mask &= (all_receptive_poses[:, 0] > 0.5)
+            elif reset_mode == "recxgeq05_recygeq015":
+                init_indices_mask &= (all_receptive_poses[:, 0] > 0.5) & (all_receptive_poses[:, 1] > 0.15)
             elif reset_mode == "none":
                 pass
             elif reset_mode == "y2_id":
@@ -1128,6 +1130,12 @@ class MultiResetManager(ManagerTermBase):
                 init_indices_mask &= (all_receptive_xs % 4 == 0) & (all_receptive_ys % 4 == 1)
             elif reset_mode == "r4_ood":
                 init_indices_mask &= (all_receptive_xs % 4 != 0) | (all_receptive_ys % 4 != 1)
+            elif reset_mode == "breakpoint":
+                breakpoint()
+            elif reset_mode.startswith("i") and reset_mode[1:].isdigit():
+                i = int(reset_mode[1:])
+                i = torch.nonzero(init_indices_mask).squeeze(-1)[i]
+                init_indices_mask = torch.arange(len(init_indices_mask)) == i
             else:
                 raise NotImplementedError(f"Unsupported reset_mode: {reset_mode}")
             init_indices = torch.nonzero(init_indices_mask).squeeze(-1).to(device=env.device)

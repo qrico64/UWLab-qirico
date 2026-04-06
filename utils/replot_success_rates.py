@@ -21,7 +21,7 @@ def extract_success_rate(eval_dir: Path, subdir: str) -> float:
     """
     rate_file = eval_dir / subdir / "final_success_rate.txt"
     if not rate_file.is_file():
-        raise FileNotFoundError(f"Missing file: {rate_file}")
+        return None
 
     lines = [line.strip() for line in rate_file.read_text().splitlines() if line.strip()]
     if not lines:
@@ -56,6 +56,8 @@ def find_checkpoint_success_rates(root: Path, subdir: str) -> list[tuple[int, fl
 
         eval_dir = root / f"{prefix}-ckpt-eval_viz"
         success_rate = extract_success_rate(eval_dir, subdir)
+        if success_rate is None:
+            continue
         results.append((ckpt_num, success_rate))
 
     results.sort(key=lambda x: x[0])

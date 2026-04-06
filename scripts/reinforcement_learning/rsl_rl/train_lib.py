@@ -490,6 +490,7 @@ class RobotTransformerPolicy(nn.Module):
 class ProcessedRobotTransformerPolicy(nn.Module):
     def __init__(self, save_path: str | pathlib.Path, device: str = "cpu", our_task: str = "peg"):
         super().__init__()
+        print(f"Loading {save_path}")
         self.device = torch.device(device)
         self.save_path = str(save_path)
 
@@ -559,6 +560,9 @@ class ProcessedRobotTransformerPolicy(nn.Module):
             "force_mu_conditioning": "none",
             "force_mu_conditioning_size": 2,
             "act_head": "relu",
+            "sys_noise": np.zeros((7,)),
+            "obs_receptive_noise": np.zeros((6,)),
+            "obs_insertive_noise": np.zeros((6,)),
         } | save_dict
 
         REQUIRED_LENGTH = 45 + 7 + 1 + 225 if save_dict["overall_arch"] == "robot_transformer" else 225

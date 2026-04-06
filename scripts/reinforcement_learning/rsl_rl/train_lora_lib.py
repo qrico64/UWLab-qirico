@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import argparse
 import cur_utils
-from train_lib import RobotTransformerPolicy
+from train_lib import RobotTransformerPolicy, ProcessedRobotTransformerPolicy
 
 class LoRALinear(nn.Module):
     """
@@ -312,6 +312,8 @@ def verify_lora_conversion_from_model(lora_model: RobotTransformerPolicy):
     Uses inherent attributes to avoid manual parameter passing.
     """
     print("\n--- Verifying LoRA Conversion (No Mutation) ---")
+    if isinstance(lora_model, ProcessedRobotTransformerPolicy):
+        lora_model = lora_model.model
     
     # 1. Determine device from the existing model
     device = next(lora_model.parameters()).device

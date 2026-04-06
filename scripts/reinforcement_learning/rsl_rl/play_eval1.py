@@ -249,15 +249,24 @@ def evaluate_model_raw(
     BASE_POLICY_FILE = pathlib.Path(base_policy_file) if base_policy_file is not None else None
     if BASE_POLICY_FILE is not None:
         base_policy_raw, base_policy_info = load_robot_policy(BASE_POLICY_FILE, device=device)
+        print(f"Using obs_receptive_noise of {base_policy_info['obs_receptive_noise']}")
+        print(f"Using obs_insertive_noise of {base_policy_info['obs_insertive_noise']}")
+        print(f"Using sys_noise of {base_policy_info['sys_noise']}")
         assert base_policy_info['infer_mode'] == "expert" or base_policy_info['infer_mode'] == "expert_new"
-        def base_policy(obs_input_dict):
+        def base_policy(obs_input_dict_original):
             with torch.no_grad():
-                return base_policy_raw.get_action(
+                obs_receptive_noise = base_policy_info['obs_receptive_noise']
+                obs_insertive_noise = base_policy_info['obs_insertive_noise']
+                sys_noise = base_policy_info['sys_noise']
+                sys_noise = torch.tensor(sys_noise, dtype=torch.float32, device=device)
+                obs_input_dict = cur_utils.apply_obs_noise(obs_input_dict_original, receptive_noise=obs_receptive_noise, insertive_noise=obs_insertive_noise)
+                base_actions_raw = base_policy_raw.get_action(
                     torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['context_dim'], device=device),
                     torch.cat([obs_input_dict['policy2'], torch.zeros(len(obs_input_dict), 7 + 1, device=device), obs_input_dict['policy']], dim=-1),
                     torch.zeros(len(obs_input_dict), T_DIM, base_policy_info['label_dim'], device=device),
                     padding_mask=torch.zeros(len(obs_input_dict), T_DIM, dtype=torch.bool, device=device),
                 )
+                return base_actions_raw + sys_noise
     else:
         base_policy = expert_policy
     
@@ -693,6 +702,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         checkpoints = list(correction_model_file.glob("*.pt"))
         checkpoints = [int(ckpt.name.replace("-ckpt.pt", "")) for ckpt in checkpoints if ckpt.name.endswith("-ckpt.pt")]
         checkpoints = sorted(checkpoints)
+        checkpoints = [checkpoints[-1]] + checkpoints[:-1]
         correction_model_files = [correction_model_file / f"{ckpt}-ckpt.pt" for ckpt in checkpoints]
         success_rates = []
         for correction_model_path in correction_model_files:
@@ -737,6 +747,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         checkpoints = list(base_policy_file.glob("*.pt"))
         checkpoints = [int(ckpt.name.replace("-ckpt.pt", "")) for ckpt in checkpoints if ckpt.name.endswith("-ckpt.pt")]
         checkpoints = sorted(checkpoints)
+        checkpoints = [checkpoints[-1]] + checkpoints[:-1]
         base_policy_files = [base_policy_file / f"{ckpt}-ckpt.pt" for ckpt in checkpoints]
         success_rates = []
         for base_policy_path in base_policy_files:
