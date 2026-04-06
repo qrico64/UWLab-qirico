@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #SBATCH --job-name=finetune        # Job name
-#SBATCH --output=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o0015s4r2__s_kl1e_6_seed1/finetune/log/%j_%x_out.txt        # Output file (%j = job ID)
-#SBATCH --error=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o0015s4r2__s_kl1e_6_seed1/finetune/log/%j_%x_err.txt         # Error file
+#SBATCH --output=/dev/null        # Output file (%j = job ID)
+#SBATCH --error=/dev/null         # Error file
 #SBATCH --time=24:00:00            # Time limit (hh:mm:ss)
 #SBATCH --nodes=1                  # Number of nodes
 #SBATCH --ntasks=1                 # Number of tasks (MPI ranks)
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:a40:1               # GPUs per node (if needed)
 #SBATCH --mem=60G                  # Memory per node
 #SBATCH --partition=ckpt-all        # Partition (queue) name
-#SBATCH --account=weirdlab         # Slurm account/project name
+#SBATCH --account=stf         # Slurm account/project name
 
 # Load environment
 cd /mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico
@@ -59,13 +59,13 @@ apptainer exec --nv \
   uw-lab-2_latest.sif \
   bash -lc 'set -e
 
-export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/feb22/expert_mlpblockbase2_4layers_epoch400/400-ckpt.pt
-export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/mar27/residual_o0015s4r2__s_kl1e_6_seed1
+export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/apr3/expert_peg_recxgeq05_recygeq015_r2_history5_seed1/400-ckpt.pt
+export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/apr3/residual_o0015s4r2_ygeq015_stateonly_history5_seed3
 export EPOCHS=1000
 export OUR_TASK=peg
 
 export CORRECTION_MODEL=$CORRECTION_MODEL_DIR/1000-ckpt.pt
-export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune
+export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune/ood_expertppo_full_1e_5_seed1
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
@@ -74,13 +74,14 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --num_envs 10 \
   --num_evals $EPOCHS \
   --finetune_mode residual \
-  --base_policy $BASE_POLICY \
+  --base_policy expert \
   --correction_model $CORRECTION_MODEL \
   --save_path $SAVE_PATH \
   --utd_ratio 1.0 \
-  --finetune_arch lora \
-  --lr 3e-4 \
-  --reset_mode xleq035
+  --finetune_arch full \
+  --lr 1e-5 \
+  --reset_mode xleq035 \
+  --seed 50
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \

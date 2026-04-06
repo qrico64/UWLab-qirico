@@ -427,6 +427,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "finetune_mode": args_cli.finetune_mode,
         "utd_ratio": args_cli.utd_ratio,
         "lr": args_cli.lr,
+        "sys_noise_scale": SYS_NOISE_SCALE,
+        "obs_receptive_noise_scale": OBS_RECEPTIVE_NOISE_SCALE,
+        "obs_insertive_noise_scale": OBS_INSERTIVE_NOISE_SCALE,
+        "sys_noise": sys_noises.cpu().numpy(),
+        "obs_receptive_noise": obs_receptive_noise.cpu().numpy(),
+        "obs_insertive_noise": obs_insertive_noise.cpu().numpy(),
     }
     base_policy_info['finetune_args'] = finetune_args
 

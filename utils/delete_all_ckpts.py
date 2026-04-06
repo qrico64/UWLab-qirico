@@ -32,6 +32,8 @@ def process_finetune_directory(dirpath, filenames, dirnames):
         m = CKPT_PATTERN.match(fname)
         if m:
             step = int(m.group(1))
+            if step >= 900 or (step >= 90 and step <= 150):
+                continue
             ckpts.append((step, fname))
 
     for dname in dirnames:
