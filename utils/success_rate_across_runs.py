@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 
 # --- CONFIG ---
 PATHS_TO_COMPARE = [
-    "experiments/mar30/residual_o0015s4r2__kl2e_3_seed2/finetune/id_noisedppo_full_1e_5_seed1/viz/success_rate_across_seeds.txt",
-    "experiments/mar30/residual_o0015s4r2__kl2e_3_seed2/finetune/ood_noisedppo_full_1e_5_seed1/viz/success_rate_across_seeds.txt",
+    "experiments/apr6/residual_o0015s4r2_ygeq015_kl1e_3_seed4/finetune-id_expert/viz/success_rate_across_seeds.txt",
+    "experiments/apr6/residual_o0015s4r2_ygeq015_kl1e_3_seed4/finetune-ood_expert/viz/success_rate_across_seeds.txt",
+    "experiments/apr6/residual_o0015s4r2_ygeq015_kl1e_3_seed4/finetune-apr3/viz/success_rate_across_seeds.txt",
 ]
 OUTPUT_FILE = "./comparison.png"
 
@@ -50,12 +51,12 @@ def main():
         line, = plt.plot(steps, means, marker="o", markersize=4, linewidth=2, label=label)
         plt.fill_between(steps, means - stds, means + stds, color=line.get_color(), alpha=0.15)
 
-    plt.axhline(0.741, linestyle="--", linewidth=2, color="red", label="base policy ood")
-    plt.axhline(0.902, linestyle="--", linewidth=2, color="green", label="base policy id")
+    plt.axhline(0.420, linestyle="--", linewidth=2, color="red", label="base policy ood")
+    plt.axhline(0.876, linestyle="--", linewidth=2, color="green", label="base policy id")
 
     plt.xlabel("Checkpoint")
     plt.ylabel("Success Rate")
-    plt.title("Finetuning Noised PPO using My Best Residual Model")
+    plt.title("Finetuning using Residual Model")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()

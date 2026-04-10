@@ -60,12 +60,12 @@ apptainer exec --nv \
   bash -lc 'set -e
 
 export BASE_POLICY=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/apr3/expert_peg_recxgeq05_recygeq015_r2_history5_seed1/400-ckpt.pt
-export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/apr3/residual_o0015s4r2_ygeq015_stateonly_history5_seed3
+export CORRECTION_MODEL_DIR=/mmfs1/gscratch/weirdlab/qirico/Meta-Learning-25-10-1/UWLab-qirico/experiments/apr6/residual_o0015s4r2_ygeq015_kl1e_3_seed4
 export EPOCHS=1000
 export OUR_TASK=peg
 
 export CORRECTION_MODEL=$CORRECTION_MODEL_DIR/1000-ckpt.pt
-export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune/ood_expertppo_full_1e_5_seed1
+export SAVE_PATH=$CORRECTION_MODEL_DIR/finetune-ood_expert
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval2.py \
   --task OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Play-v0 \
@@ -80,7 +80,7 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --utd_ratio 1.0 \
   --finetune_arch full \
   --lr 1e-5 \
-  --reset_mode xleq035 \
+  --reset_mode xleq035_recyleq005 \
   --seed 50
 
 HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/play_eval1.py \
@@ -90,6 +90,6 @@ HYDRA_FULL_ERROR=1 /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/pl
   --num_envs 100 \
   --num_evals 2000 \
   --base_policy $SAVE_PATH \
-  --reset_mode xleq035 \
+  --reset_mode xleq035_recyleq005 \
   --eval_mode default
 '

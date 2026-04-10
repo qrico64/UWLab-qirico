@@ -4,7 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- CONFIG ---
-REFERENCE_FILE = "experiments/mar29/residual_o0015s2r4_seed3/finetune-feb22/viz/success_rate_over_checkpoints.txt"
+REFERENCE_FILE = [
+    f"experiments/apr6/residual_o0015s4r2_ygeq015_kl1e_3_seed{i+3}/finetune-apr3/viz/success_rate_over_checkpoints.txt"
+    for i in [1, 2, 3]
+]
 
 NUM_SEEDS = 3
 

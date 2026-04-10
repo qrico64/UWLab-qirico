@@ -399,8 +399,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     sys_noises = torch.randn(A_DIM, device=args_cli.device) * SYS_NOISE_SCALE * general_noise_scales
     obs_receptive_noise = torch.cat([torch.randn(2, device=args_cli.device) * OBS_RECEPTIVE_NOISE_SCALE, torch.zeros(4, device=args_cli.device)], dim=-1)
     obs_insertive_noise = torch.cat([torch.randn(2, device=args_cli.device) * OBS_INSERTIVE_NOISE_SCALE, torch.zeros(4, device=args_cli.device)], dim=-1)
-    # sys_noises = torch.tensor([-3.8589,  4.6044,  3.1309,  8.7832, 11.7004, -1.6590,  8.4767], dtype=torch.float32, device=args_cli.device)
-    # obs_receptive_noise = torch.tensor([0.0096, 0.0075, 0.0000, 0.0000, 0.0000, 0.0000], dtype=torch.float32, device=args_cli.device)
+    USING_FIXED_NOISE = False
+    if args_cli.base_policy == "expert":
+        USING_FIXED_NOISE = True
+        sys_noises = torch.tensor([-3.8589,  4.6044,  3.1309,  8.7832, 11.7004, -1.6590,  8.4767], dtype=torch.float32, device=args_cli.device)
+        obs_receptive_noise = torch.tensor([0.0096, 0.0075, 0.0000, 0.0000, 0.0000, 0.0000], dtype=torch.float32, device=args_cli.device)
     base_policy_info['obs_receptive_noise'] = obs_receptive_noise
     base_policy_info['obs_insertive_noise'] = obs_insertive_noise
     base_policy_info['sys_noise'] = sys_noises
@@ -433,6 +436,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         "sys_noise": sys_noises.cpu().numpy(),
         "obs_receptive_noise": obs_receptive_noise.cpu().numpy(),
         "obs_insertive_noise": obs_insertive_noise.cpu().numpy(),
+        "reset_mode": args_cli.reset_mode,
+        "using_fixed_noise": USING_FIXED_NOISE,
     }
     base_policy_info['finetune_args'] = finetune_args
 
